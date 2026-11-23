@@ -218,9 +218,10 @@ mod tests {
         )
     }
 
-    /// `main`'s `test_mode_status_line_default_is_none`: the default mode
-    /// has no line, and neither does NodeEdit from the mode alone, whose
-    /// line reads the document. Control: a mode that has one says it.
+    /// `main`'s `test_mode_status_line_default_is_none` (gone): the
+    /// default mode has no line, and neither does NodeEdit from the mode
+    /// alone, whose line reads the document. Control: a mode that has one
+    /// says it.
     #[test]
     fn test_status_line_is_none_for_default_and_read_from_the_document_for_node_edit() {
         let doc = text_fixture();
@@ -235,7 +236,8 @@ mod tests {
         );
     }
 
-    /// `main`'s `test_mode_status_line_node_edit_single_section_uses_short_form`:
+    /// `main`'s
+    /// `test_mode_status_line_node_edit_single_section_uses_short_form` (gone):
     /// a node of one section reads `editing: <id>` — nothing to pick, no
     /// `[N of M]` — whatever is focused. Control: a node of two takes the
     /// long form.
@@ -254,7 +256,8 @@ mod tests {
         assert!(long.contains("section ["), "control: {long:?}");
     }
 
-    /// `main`'s `test_mode_status_line_node_edit_multi_section_renders_n_of_m`:
+    /// `main`'s
+    /// `test_mode_status_line_node_edit_multi_section_renders_n_of_m` (gone):
     /// the focused section's place among the node's, from one. Control:
     /// the first section reads `1`, so the `2` is the second's place, not
     /// a constant.
@@ -273,7 +276,8 @@ mod tests {
         );
     }
 
-    /// `main`'s `test_mode_status_line_node_edit_single_no_section_picked_renders_dash`
+    /// `main`'s
+    /// `test_mode_status_line_node_edit_single_no_section_picked_renders_dash` (gone)
     /// and `…_section_owner_mismatch_renders_dash`: no focus, or a focus
     /// that is not a section of the edited node (another node's section,
     /// the node itself), reads `[- of M]`, never a made-up index. Control:
