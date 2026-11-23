@@ -9,8 +9,7 @@
 //! (`crate::application::fields::section::targets`). `section text`
 //! replaces a section's spans with one span; styled text is edited by
 //! the text editor and the `range` verb. `section edit` opens the text
-//! editor, which V1-C8 (#249) rebuilds; until then it refuses, naming
-//! that issue.
+//! editor on the one section the line reaches (V1-C8).
 
 pub(crate) mod grammar;
 
@@ -116,7 +115,19 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 .unwrap_or_default();
             (section::text(doc, index, text), "section text")
         }
-        Some(Route::Edit) => return super::rebuilt_by("section edit", super::TEXT_OWNER),
+        Some(Route::Edit) => {
+            return match section::targets(doc, index) {
+                Ok(targets) => match targets.as_slice() {
+                    [only] => super::open_editor(
+                        eff,
+                        crate::application::console::EditorOpen::Section(*only),
+                        "section edit: opening the editor",
+                    ),
+                    _ => ExecResult::err("section edit: the editor opens on one section; select one"),
+                },
+                Err(msg) => ExecResult::err(msg.replacen("section:", "section edit:", 1)),
+            }
+        }
         Some(Route::Add) => {
             let at = kvs::value(&pairs, "at").map(values::index).transpose();
             let text = kvs::value(&pairs, "text").unwrap_or_default();

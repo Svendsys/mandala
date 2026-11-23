@@ -616,8 +616,9 @@ fn test_set_link_kind_on_a_connector_is_refused() {
     );
 }
 
-/// **A label on a portal link is refused, naming the span editors
-/// (V1-C8, #249).** Control: on a line link the same Action applies.
+/// **A label on a portal link is refused, naming the double-click on an
+/// end's label as the way in** (ruling K4 on #249). Control: on a line
+/// link the same Action applies.
 #[test]
 fn test_a_label_on_a_portal_link_is_refused() {
     let mut doc = fixture();
@@ -626,7 +627,7 @@ fn test_a_label_on_a_portal_link_is_refused() {
         act(&Action::SetLabelText("x".into()), &mut doc),
         DispatchOutcome::Refused(LABEL_ON_A_PORTAL)
     );
-    assert!(LABEL_ON_A_PORTAL.contains("V1-C8 (#249)"));
+    assert!(LABEL_ON_A_PORTAL.contains("double-click the label beside an end"));
     assert_eq!(
         run_line(&mut doc, "label delete"),
         Err(LABEL_ON_A_PORTAL.to_string()),

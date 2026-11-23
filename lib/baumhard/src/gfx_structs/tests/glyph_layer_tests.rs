@@ -377,6 +377,35 @@ pub fn do_run_interpolates_origin_opacity_and_overrides_and_snaps_the_shape() {
         }
     }
 
+    // The fade blends as the scale does (ruling K2 on #249): halfway
+    // between a run faded to 0.5 and one at its neutral 1.0 is 0.75.
+    let faded = run_with(
+        shape.clone(),
+        Vec2::ZERO,
+        1.0,
+        vec![RunOverrideOp::Fade {
+            range: 0..4,
+            value: 0.5,
+        }],
+    );
+    let lit = run_with(
+        shape.clone(),
+        Vec2::ZERO,
+        1.0,
+        vec![RunOverrideOp::Fade {
+            range: 0..4,
+            value: 1.0,
+        }],
+    );
+    for snap in [Snap::End, Snap::Start] {
+        let mid = GfxElement::interpolate(&faded, &lit, 0.5, snap);
+        assert_eq!(
+            mid.glyph_run().unwrap().overrides().fade(),
+            &[0.75; 4],
+            "{snap:?}: fades"
+        );
+    }
+
     // The endpoints are the elements themselves.
     assert!(GfxElement::interpolate(&before, &after, 0.0, Snap::End).same_state(&before));
     assert!(GfxElement::interpolate(&before, &after, 1.0, Snap::End).same_state(&after));

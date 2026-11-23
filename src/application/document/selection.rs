@@ -13,8 +13,8 @@
 //!
 //! One section's text can be selected in part: a range of grapheme
 //! clusters within it ([`Selection::range`]), which every other change
-//! of the selection drops. V1-C8's node editing makes one; the clipboard
-//! reads it.
+//! of the selection drops. The section text editor's commit leaves one
+//! (`app::text_edit`); the clipboard reads it.
 //!
 //! The selection is app state, not document state: it is never saved
 //! and never in the history. A change or an undo that removes a selected
@@ -85,8 +85,8 @@ impl Selection {
     }
 
     /// Select grapheme clusters `start..end` of `section`'s text alone:
-    /// what V1-C8's (#249) node editing selects, and what a cut or a
-    /// paste of a range leaves selected.
+    /// what the section text editor's commit leaves selected, and what a
+    /// cut or a paste of a range leaves selected.
     pub fn select_range(&mut self, section: NodeId, start: usize, end: usize) {
         self.items.clear();
         self.items.push(section);
@@ -163,7 +163,8 @@ pub fn kind_of(doc: &Document, id: NodeId) -> Option<DocKind> {
 /// The element a click on `hit` selects: the path a glyph of a
 /// connector, a link, a cap or a label belongs to — a portal end's
 /// link — and otherwise the node. Sections, frames and rings select
-/// their node: editing inside a node is V1-C8's (#249) NodeEdit mode.
+/// their node: editing inside a node is NodeEdit mode's
+/// (`InteractionMode::NodeEdit`).
 /// O(the depth from the element hit to its path, at most three).
 pub fn selectable(doc: &Document, hit: &Hit) -> NodeId {
     let mut at = Some(hit.element);

@@ -34,8 +34,11 @@
 //! **Modal state machines.** `console_input` steals keyboard input
 //! while the console is open (the §3 carve-out for modals that own the
 //! literal `winit::Key` payload), and so does the color picker
-//! (`color_picker_flow`), whose contextual mode is a transaction. The
-//! map's own editors return with V1-C8 (#249).
+//! (`color_picker_flow`), whose contextual mode is a transaction. So do
+//! the map's own editors while one is open — the section text editor
+//! (`text_edit`, both targets) and the single-line editor
+//! (`single_line_edit`, native): a key bound in the editor's context
+//! dispatches its Action, and any other key is typed.
 //!
 //! **Cross-platform shape.** Pure logic (gesture recognition,
 //! viewport math, hit testing, `Action` resolution) lives in
@@ -109,10 +112,16 @@ mod run_wasm;
 mod settle;
 #[cfg(not(target_arch = "wasm32"))]
 mod shell;
+// The single-line editor (V1-C8): native, as on `main` (CLAUDE.md
+// "Single-line editor").
+#[cfg(not(target_arch = "wasm32"))]
+mod single_line_edit;
 // Cross-platform: both init paths resolve the initial map load
 // through it, which is what keeps the two from surfacing a load
 // failure differently (CODE_CONVENTIONS §4).
 mod startup_load;
+// The section text editor (V1-C8): both targets, as on `main`.
+mod text_edit;
 mod touch_gesture;
 #[cfg(not(target_arch = "wasm32"))]
 mod touch_handle;
@@ -568,6 +577,7 @@ impl DragState {
         };
         Some(dispatch::DispatchHit {
             click_hit: *hit,
+            element: None,
             canvas_pos: *start_canvas,
             held_by: Some(crate::application::platform::input::MouseButton::Right),
         })
@@ -733,6 +743,11 @@ mod tests_edits;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_presentations;
+// The text editors' view, renderer-free (V1-C8): native, where the
+// single-line editor is.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_text;
 
 // Map verbs, their triggers and links (V1-D3).
 #[cfg(test)]
@@ -779,6 +794,9 @@ mod tests_gpu_presentations;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_structure;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_text;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_verbs;

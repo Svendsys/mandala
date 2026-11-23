@@ -12,8 +12,9 @@
 //!   holding its text as one span; `frame ring <i> text=… | size=… |
 //!   fit=…` sets ring `i`'s (innermost first) — a `text=` on a ring that
 //!   is exactly one of the cycle's boxes takes its `vertical` and
-//!   `corners` along, to the box of the new text or off (#338) — and
-//!   `frame ring <i> delete` removes it;
+//!   `corners` along, to the box of the new text or off (#338) —
+//!   `frame ring <i> delete` removes it, and `frame ring <i> edit` opens
+//!   the single-line editor on its poem (V1-C8);
 //! - `frame preview <keys>` shows the fields without making an edit;
 //!   `frame commit` makes the preview one undo entry, and `frame cancel`
 //!   (or `ExitMode`) reverts it.
@@ -146,7 +147,10 @@ const RING_KEYS: &[Key] = &[
 ];
 
 const ADD: &[Word] = &[Word::new("add", "add a ring outside the others")];
-const DELETE: &[Word] = &[Word::new("delete", "remove the ring")];
+const RING_ACTS: &[Word] = &[
+    Word::new("delete", "remove the ring"),
+    Word::new("edit", "edit the ring's poem in the single-line editor"),
+];
 
 /// `frame ring …`: no subverbs, so its index sits in the first slot.
 pub static RING: Grammar = Grammar {
@@ -157,7 +161,7 @@ pub static RING: Grammar = Grammar {
         "rings",
         &[
             Form::slots(&[Slot::req(Vocabulary::Words(ADD))]).reading(&["text", "size"]),
-            Form::slots(&[Slot::req(free("i")), Slot::opt(Vocabulary::Words(DELETE))])
+            Form::slots(&[Slot::req(free("i")), Slot::opt(Vocabulary::Words(RING_ACTS))])
                 .reading(&["text", "size", "fit", "color"]),
         ],
     )),
@@ -166,7 +170,7 @@ pub static RING: Grammar = Grammar {
 const SUBVERBS: &[Subverb] = &[
     Subverb::bare("on", "visibility", "show the frame; a node with none gets one"),
     Subverb::bare("off", "visibility", "hide the frame"),
-    Subverb::nested("ring", "rings", "add, set or delete a ring", &RING),
+    Subverb::nested("ring", "rings", "add, set, delete or edit a ring", &RING),
     Subverb::bare("preview", "preview", "show frame fields without an edit")
         .taking(&[Form::opt(&frame::FIELD_KEYS), Form::opt(&["target"])])
         .gated(),
@@ -321,6 +325,19 @@ fn ring(eff: &mut ConsoleEffects, first: Option<&str>, second: Option<&str>, pai
                 }
             };
             match second {
+                Some(word) if word.eq_ignore_ascii_case("edit") => {
+                    if !pairs.is_empty() {
+                        return ExecResult::err("frame ring <i> edit: takes no keys");
+                    }
+                    return match frame::ring_to_edit(doc, index) {
+                        Ok(ring) => super::open_editor(
+                            eff,
+                            crate::application::console::EditorOpen::Line(ring),
+                            "frame ring edit: opening the editor",
+                        ),
+                        Err(msg) => ExecResult::err(msg),
+                    };
+                }
                 Some(_) if !pairs.is_empty() => {
                     return ExecResult::err("frame ring <i> delete: takes no keys");
                 }

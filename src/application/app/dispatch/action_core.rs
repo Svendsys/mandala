@@ -8,8 +8,9 @@
 //! the structure family (`super::families::structure`: create, delete,
 //! reparent, connect, the clipboard) and the field family
 //! (`super::families::field_nodes`: node, section and frame fields, and
-//! style across the selection), then to the families an owner
-//! issue rebuilds (`super::families`), which answer theirs `Unhandled`.
+//! style across the selection), the path family
+//! (`super::families::field_paths`) and the text family
+//! (`super::families::text`: the section editor and node editing).
 //! Returns `Handled` when a body ran;
 //! `Unhandled` for variants this dispatcher doesn't own — the caller's
 //! fall-through (native only) runs the platform-specific arm.
@@ -33,11 +34,11 @@ use super::the_map::OnTheMap;
 
 /// Cross-platform action dispatcher. Returns `Handled` when the arm body
 /// ran; `Unhandled` for variants this dispatcher doesn't own (NativeOnly
-/// Actions, and the families' Actions).
+/// Actions, and the halves of the families that are native's).
 ///
 /// `hit` carries the pointer-event-only payload (what the press landed
 /// on, where it landed in canvas space): `CreateOrphanNode` places its
-/// node there, and V1-C8's double-click will take it from here.
+/// node there, and `DoubleClickActivate` edits what it landed on.
 pub(in crate::application::app) fn dispatch_compatible(
     action: &Action,
     core: &mut InputContextCore<'_>,
@@ -75,7 +76,7 @@ fn dispatch_arms(
     if let Some(outcome) = families::field_paths::dispatch(action, core) {
         return outcome;
     }
-    if let Some(outcome) = families::dispatch(action) {
+    if let Some(outcome) = families::text::dispatch(action, core, hit) {
         return outcome;
     }
     match action {
@@ -90,6 +91,11 @@ fn dispatch_arms(
                     }
                     return DispatchOutcome::Handled;
                 }
+            }
+            // Leaving NodeEdit lifts a selection inside the node back to
+            // the node, as on `main`.
+            if let Some(doc) = core.document.as_deref_mut() {
+                families::text::leave_node_edit(doc, core.interaction_mode);
             }
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.

@@ -8,6 +8,7 @@ use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
 use baumhard::document::tests::deep_tests::*;
 use baumhard::document::tests::deps_tests::*;
+use baumhard::document::tests::edit_buffer_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::format_tests::*;
 use baumhard::document::tests::ids_tests::*;
@@ -2089,6 +2090,34 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_compose_replaces_spans", |b| {
         b.iter(do_document_compose_replaces_spans)
     });
+    c.bench_function("edit_buffer_reads_every_text_owner", |b| {
+        b.iter(do_edit_buffer_reads_every_text_owner)
+    });
+    c.bench_function("edit_buffer_inserts_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_inserts_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_deletes_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_deletes_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_styles_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_styles_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_counts_multi_codepoint_clusters", |b| {
+        b.iter(do_edit_buffer_counts_multi_codepoint_clusters)
+    });
+    c.bench_function("edit_buffer_normalizes_equal_neighbors_only", |b| {
+        b.iter(do_edit_buffer_normalizes_equal_neighbors_only)
+    });
+    c.bench_function("edit_buffer_takes_ime_payloads_as_main_did", |b| {
+        b.iter(do_edit_buffer_takes_ime_payloads_as_main_did)
+    });
+    c.bench_function(
+        "edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span",
+        |b| b.iter(do_edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span),
+    );
+    c.bench_function("edit_buffer_joins_a_crlf_as_main_did", |b| {
+        b.iter(do_edit_buffer_joins_a_crlf_as_main_did)
+    });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)
     });
@@ -2851,6 +2880,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         "run_override_ops_write_their_range_and_materialize_the_rest_neutral",
         |b| b.iter(do_run_override_ops_write_their_range_and_materialize_the_rest_neutral),
     );
+    c.bench_function(
+        "run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it",
+        |b| b.iter(do_run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it),
+    );
+    c.bench_function("run_fade_has_no_json_spelling", |b| {
+        b.iter(do_run_fade_has_no_json_spelling)
+    });
     c.bench_function("run_override_ranges_are_clamped_to_the_placed_glyphs", |b| {
         b.iter(do_run_override_ranges_are_clamped_to_the_placed_glyphs)
     });

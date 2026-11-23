@@ -17,7 +17,7 @@
 //!          LayerRenderer::apply(projector's ++ overlays' ++ presentations')
 //!                                           │ LayerChanges
 //!                                           ▼
-//!                       chrome builders ──▶ LayerRenderer::apply_chrome
+//!      handles, caret, section frames ──▶ LayerRenderer::apply_chrome
 //!                                           │
 //!                                           ▼ discard every journal
 //! ```
@@ -35,17 +35,17 @@
 //! calls none of this: the renderer applies the camera when it draws
 //! (§12.4).
 //!
-//! **Chrome that follows the document** registers a
-//! [`chrome::ChromeBuilder`] at load ([`MapView::load_with_chrome`]):
-//! the hook V1-C8's caret registers on, so it does not edit this pass. A
-//! pass that changed the layers hands its `LayerChanges` to every builder
-//! before it discards them, and applies what they return to the chrome
-//! layer under one journal in the same pass ([module docs](chrome)). The
-//! **handle chrome** ([`handles`]) follows the selection and the mode as
-//! well as the document, so the view keeps it itself: every pass compares
-//! the handles' targets with the ones shown and asks whether its changes
-//! touch them, and writes them in that same journal — and a pass that
-//! changed none of it, a pan's or a zoom's, writes no chrome.
+//! **Chrome that follows app state as well as the document** — the
+//! **handles** ([`handles`]: the selection and the mode), a text editor's
+//! **caret** ([`caret`]: the editor's focus, `MapView::follow_editor`) and
+//! NodeEdit's **section frames** ([`frames`]: the mode) — is kept by the
+//! view itself (ruling K1 on #249): every pass compares what each wants
+//! with what it shows and asks whether the pass's changes touched or
+//! moved its target, and writes what changed under one chrome journal in
+//! that pass — and a pass that changed none of it, a pan's or a zoom's,
+//! writes no chrome. NodeEdit's **dim** and the editor's selected
+//! **range** are overlays ([`overlay::Dim`], [`overlay::RangeTint`]),
+//! planned and written with the others.
 //!
 //! **One font lease per pass** (#241, B7's note): a load and a sync each
 //! hold one `FontSystemLease`, taken at the first font read and released
@@ -59,9 +59,11 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod band;
-pub(crate) mod chrome;
+pub(crate) mod caret;
+pub(crate) mod frames;
 pub(crate) mod handles;
 pub(crate) mod inspect;
+pub(crate) mod outline;
 pub(crate) mod overlay;
 pub(crate) mod present;
 #[cfg(test)]
@@ -94,8 +96,11 @@ use crate::application::keybinds::ColorAxis;
 use crate::application::renderer::{LayerRenderer, Renderer};
 use baumhard::document::ids::Document;
 
-use self::chrome::{ChromeBuilder, PassChanges};
-use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT, TARGET_HIGHLIGHT};
+use self::caret::{Caret, EditorFocus};
+use self::frames::SectionFrames;
+use self::overlay::{
+    Dim, Overlay, OverlayJournals, RangeTint, SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT, TARGET_HIGHLIGHT,
+};
 
 /// The view of one open map. See the [module docs](self).
 pub(crate) struct MapView {
@@ -105,15 +110,25 @@ pub(crate) struct MapView {
     layers: GlyphLayers,
     /// The chrome layer (design §12.1): view-only glyphs built from app
     /// state rather than the document — the rubber band
-    /// (`view::band`, native), the handles ([`handles`]), and V1-C8's
-    /// section frames to come. Drawn above the five layers; written only
-    /// under a journal the renderer applies — [`Self::apply_chrome`]'s,
-    /// or a sync pass's for the handles and the chrome builders.
+    /// (`view::band`, native), the handles ([`handles`]), a text editor's
+    /// caret ([`caret`]) and NodeEdit's section frames ([`frames`]). Drawn
+    /// above the five layers; written only under a journal the renderer
+    /// applies — [`Self::apply_chrome`]'s, or a sync pass's.
     chrome: GfxTree,
-    /// The chrome that follows the document ([`chrome::ChromeBuilder`]),
-    /// in the order they were registered at load: handed every sync
-    /// pass's `LayerChanges`.
-    chrome_builders: Vec<Box<dyn ChromeBuilder>>,
+    /// A text editor's caret, in the chrome.
+    caret: Caret,
+    /// What the open text editor edits and where its caret is
+    /// ([`Self::follow_editor`]); `None` with no editor open.
+    editing: Option<EditorFocus>,
+    /// NodeEdit's section frames, in the chrome.
+    frames: SectionFrames,
+    /// The node NodeEdit edits, while it is active
+    /// ([`Self::follow_node_edit`]).
+    node_edit: Option<NodeId>,
+    /// NodeEdit's dim: every other node faded, stamped on their runs.
+    dim: Dim,
+    /// An open editor's selected range, stamped on its run.
+    range: RangeTint,
     /// The rubber band's four runs in [`Self::chrome`]. Native, with
     /// the rubber band.
     #[cfg(not(target_arch = "wasm32"))]
@@ -184,20 +199,7 @@ impl MapView {
     /// placed once, under one font lease; one walk of each layer by the
     /// renderer.
     pub(crate) fn load(doc: &mut MindMapDocument, renderer: &mut Renderer) -> MapView {
-        Self::load_with_chrome(doc, renderer, Vec::new())
-    }
-
-    /// [`Self::load`], with `builders` registered for the chrome that
-    /// follows the document ([`chrome::ChromeBuilder`]): each is planted
-    /// in the chrome layer before the renderer loads it, and from then on
-    /// handed every sync pass's changes. Cost: [`Self::load`]'s, and each
-    /// builder's planting.
-    pub(crate) fn load_with_chrome(
-        doc: &mut MindMapDocument,
-        renderer: &mut Renderer,
-        builders: Vec<Box<dyn ChromeBuilder>>,
-    ) -> MapView {
-        let (mut view, stamps) = Self::project(doc, builders);
+        let (mut view, stamps) = Self::project(doc);
         renderer.load_view(&view.layers, &view.chrome);
         renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
         stamps.discard(&mut view.layers);
@@ -207,13 +209,10 @@ impl MapView {
         view
     }
 
-    /// The projection half of [`Self::load_with_chrome`]: the view of
-    /// `doc`, its chrome builders planted, its highlight stamped, and the
-    /// stamps' journals still to discard.
-    fn project(
-        doc: &mut MindMapDocument,
-        mut builders: Vec<Box<dyn ChromeBuilder>>,
-    ) -> (MapView, OverlayJournals) {
+    /// The projection half of [`Self::load`]: the view of `doc`, its
+    /// chrome planted, its highlight stamped, and the stamps' journals
+    /// still to discard.
+    fn project(doc: &mut MindMapDocument) -> (MapView, OverlayJournals) {
         doc.take_changes();
         let mut layers = GlyphLayers::new();
         let projector = {
@@ -224,14 +223,18 @@ impl MapView {
         #[cfg(not(target_arch = "wasm32"))]
         let band = band::plant(&mut chrome);
         let handles = handles::Handles::plant(&mut chrome);
-        for builder in &mut builders {
-            builder.plant(&mut chrome);
-        }
+        let caret = Caret::plant(&mut chrome);
+        let frames = SectionFrames::plant(&mut chrome);
         let mut view = MapView {
             projector,
             layers,
             chrome,
-            chrome_builders: builders,
+            caret,
+            editing: None,
+            frames,
+            node_edit: None,
+            dim: Dim::default(),
+            range: RangeTint::default(),
             #[cfg(not(target_arch = "wasm32"))]
             band,
             #[cfg(not(target_arch = "wasm32"))]
@@ -275,16 +278,16 @@ impl MapView {
     /// line when it changes — the one place every family's refusal is
     /// drawn, on both targets.
     ///
-    /// When the layers changed, the chrome builders are handed the
-    /// changes ([`chrome::PassChanges`]) and what they return is applied
-    /// to the chrome, and by the renderer, before the pass discards its
-    /// journals.
+    /// The chrome — the handles, the caret, the section frames — is
+    /// brought up to date in the same pass, under one journal the renderer
+    /// applies before the pass discards its journals
+    /// ([`Self::chrome_pass`]).
     ///
     /// Cost: the projector's update (proportional to the changes and their
-    /// readers), the overlay's re-stamp (the runs named), the glyph-layer
-    /// presentations' rewrite (the runs [`present`] names), each chrome
-    /// builder's reading of the changes, the renderer's apply (the
-    /// elements the journals name); O(1) for the status line.
+    /// readers), the overlays' re-stamp (the runs named), the glyph-layer
+    /// presentations' rewrite (the runs [`present`] names), the chrome's
+    /// reading of the changes, the renderer's apply (the elements the
+    /// journals name); O(1) for the status line.
     pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
         self.sync_with_faces(doc, renderer, &[])
     }
@@ -319,10 +322,8 @@ impl MapView {
     ) -> bool {
         let status_changed = self.show_status(doc, renderer);
         let pass = self.advance(doc, families);
-        let mut chrome = self.follow_handles(doc, pass.as_ref().and_then(|pass| pass.changes.as_ref()));
         let Some(pass) = pass else {
-            let drew = !chrome.is_empty();
-            self.write_chrome(&chrome, renderer);
+            let drew = self.write_chrome(doc, None, renderer);
             return status_changed || drew;
         };
         let projected = pass
@@ -333,29 +334,181 @@ impl MapView {
         let stamped = pass.stamps.iter().flat_map(OverlayJournals::journals);
         let presented = pass.presented.journals();
         renderer.apply_layer_journals(&self.layers, projected.chain(stamped).chain(presented));
-        if let Some(changes) = &pass.changes {
+        if pass.changes.is_some() {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
-            chrome.extend(self.follow_chrome(changes, doc));
         }
-        self.write_chrome(&chrome, renderer);
+        self.write_chrome(doc, pass.changes.as_ref(), renderer);
         self.finish(pass);
         true
     }
 
-    /// Apply `mutators` to the chrome layer under one journal, hand the
-    /// journal to the renderer and discard it: the chrome half of a sync
-    /// pass. Nothing for no mutators; a refusal reverts everything and is
-    /// logged.
-    fn write_chrome(&mut self, mutators: &[(GfxMutatorTree, Anchors)], renderer: &mut Renderer) {
-        if mutators.is_empty() {
-            return;
-        }
-        match self.journal_chrome(mutators) {
-            Ok(journal) => {
+    /// The chrome half of a sync pass ([`Self::chrome_pass`]), handed to
+    /// the renderer and discarded. Returns whether it wrote any chrome; a
+    /// refusal reverts all of it and is logged.
+    fn write_chrome(
+        &mut self,
+        doc: &MindMapDocument,
+        changes: Option<&LayerChanges>,
+        renderer: &mut Renderer,
+    ) -> bool {
+        match self.chrome_pass(doc, changes) {
+            Ok(Some(journal)) => {
                 renderer.apply_chrome_journal(&self.chrome, &journal);
                 journal.discard(&mut self.chrome);
+                true
             }
-            Err(error) => log::warn!("view: a chrome mutator was refused: {error}"),
+            Ok(None) => false,
+            Err(error) => {
+                log::warn!("view: a chrome mutator was refused: {error}");
+                false
+            }
+        }
+    }
+
+    /// Bring the chrome up to date for this pass, under one journal: the
+    /// handles ([`Self::follow_handles`]), the caret ([`Self::follow_caret`])
+    /// and NodeEdit's section frames ([`Self::follow_node_edit`]) — whose
+    /// pool, when
+    /// a node has more sections than it has slots, is grown first, in the
+    /// same journal. `None` when nothing of it changed, which is a pan's
+    /// and a zoom's pass. A refusal reverts everything applied before it.
+    ///
+    /// Cost: what each of the three costs; no chrome walk.
+    fn chrome_pass(
+        &mut self,
+        doc: &MindMapDocument,
+        changes: Option<&LayerChanges>,
+    ) -> Result<Option<Journal<GfxElement>>, TreeError> {
+        let mut journal = JournalBuilder::new();
+        let mut any = false;
+        let node = self.node_edit.filter(|&node| doc.doc().get(node).is_some());
+        let focus = self.focused_section(doc, node);
+        // The node, its sections and its frame, and its rings: what a frame
+        // is placed by (`frames::place`).
+        let follow_frames = changes.is_some()
+            && node.is_some_and(|node| {
+                let d = doc.doc();
+                self.projector.geometry_moved(node)
+                    || d.children(node).any(|child| {
+                        self.projector.geometry_moved(child)
+                            || d.children(child).any(|ring| self.projector.geometry_moved(ring))
+                    })
+            });
+        if self.frames.due(node, focus, follow_frames) {
+            let want = self
+                .frames
+                .wanted(doc.doc(), &self.projector, &self.layers, node, focus);
+            let grow = self.frames.grow(want.len());
+            if !grow.is_empty() {
+                for (mutator, anchors) in &grow {
+                    mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
+                }
+                self.frames.adopt(&self.chrome);
+                any = true;
+            }
+            let frames = self.frames.update(node, focus, &want);
+            for (mutator, anchors) in &frames {
+                mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
+                any = true;
+            }
+        }
+        let mut mutators = self.follow_handles(doc, changes);
+        mutators.extend(self.follow_caret(doc, changes));
+        for (mutator, anchors) in &mutators {
+            mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
+            any = true;
+        }
+        Ok(any.then(|| journal.close(&self.chrome)))
+    }
+
+    /// The section NodeEdit focuses on `node`: the one an editor has open,
+    /// or else the one selected. O(1).
+    fn focused_section(&self, doc: &MindMapDocument, node: Option<NodeId>) -> Option<NodeId> {
+        let node = node?;
+        let in_node = |section: NodeId| {
+            crate::application::document::selection::kind_of(doc.doc(), section)
+                == Some(baumhard::document::element::DocKind::Section)
+                && doc.doc().parent(section) == Some(node)
+        };
+        self.editing
+            .map(|focus| focus.owner)
+            .filter(|&owner| in_node(owner))
+            .or_else(|| {
+                let mut selected = doc.selection.iter();
+                match (selected.next(), selected.next()) {
+                    (Some(only), None) if in_node(only) => Some(only),
+                    _ => None,
+                }
+            })
+    }
+
+    /// The caret's chrome mutator for this pass ([`caret::Caret::update`]):
+    /// written again when the editor's focus changed, or when `changes`
+    /// touched its owner ([`caret::touches`]) or may have moved its
+    /// geometry or its node's (`Projector::geometry_moved`). Nothing for a
+    /// pass that changed none of it.
+    fn follow_caret(
+        &mut self,
+        doc: &MindMapDocument,
+        changes: Option<&LayerChanges>,
+    ) -> Option<(GfxMutatorTree, Anchors)> {
+        let follow = match (changes, self.editing.or(self.caret.focus())) {
+            (Some(changes), Some(focus)) => {
+                let moved = |element: NodeId| self.projector.geometry_moved(element);
+                caret::touches(changes, doc.doc(), &self.projector, focus.owner)
+                    || moved(focus.owner)
+                    || moved(focus.host)
+                    || doc.doc().parent(focus.owner).is_some_and(moved)
+            }
+            _ => false,
+        };
+        self.caret
+            .update(self.editing, follow, doc.doc(), &self.projector, &self.layers)
+    }
+
+    /// Follow the open text editor: what it edits and where its caret and
+    /// its anchor are, or `None` once it closes. While it is open the
+    /// selection tint stands down on what it edits, a path it edits text
+    /// on shows no handles, its selected range is tinted, and its caret is
+    /// drawn; each takes effect at the next
+    /// [`Self::sync`], which works out whether anything changed. O(1).
+    pub(crate) fn follow_editor(&mut self, focus: Option<EditorFocus>) {
+        self.editing = focus;
+    }
+
+    /// The caret, for the tests that read where it is drawn.
+    #[cfg(test)]
+    pub(crate) fn caret(&self) -> &Caret {
+        &self.caret
+    }
+
+    /// The section frames, for the tests that read what they show.
+    #[cfg(test)]
+    pub(crate) fn frames(&self) -> &SectionFrames {
+        &self.frames
+    }
+
+    /// NodeEdit's dim, for the tests that read what it stamps.
+    #[cfg(test)]
+    pub(crate) fn dim(&self) -> &Dim {
+        &self.dim
+    }
+
+    /// The editor's range tint, for the tests that read what it stamps.
+    #[cfg(test)]
+    pub(crate) fn range_tint(&self) -> &RangeTint {
+        &self.range
+    }
+
+    /// Follow NodeEdit on both targets: the node it edits while `mode` is
+    /// NodeEdit — the other nodes dimmed, its sections framed — or none.
+    /// In the browser, which follows no other mode, the mode's status line
+    /// with it. Takes effect at the next [`Self::sync`]. O(1).
+    pub(crate) fn follow_node_edit(&mut self, mode: &crate::application::app::InteractionMode) {
+        self.node_edit = mode.node_edit();
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.mode_line = mode.status_line();
         }
     }
 
@@ -376,7 +529,16 @@ impl MapView {
         doc: &MindMapDocument,
         changes: Option<&LayerChanges>,
     ) -> Vec<(GfxMutatorTree, Anchors)> {
-        let targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
+        let mut targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
+        // While an editor edits text on a path — its label, its content, a
+        // cap — that path's handles stand down, so none is drawn over what
+        // is typed or grabs a press meant for it; they return when the
+        // editor closes (ruling on #249, as the tint stands down on the
+        // picker's targets, #248).
+        let path = &mut targets[handles::HandleSet::Path.index()];
+        if path.is_some() && *path == self.editing.map(|focus| focus.host) {
+            *path = None;
+        }
         let follow = match changes {
             Some(_) => handles::HandleSet::ALL.map(|set| {
                 targets[set.index()].is_some_and(|target| {
@@ -435,27 +597,6 @@ impl MapView {
         &self.handles
     }
 
-    /// Hand a pass's `changes` to every chrome builder, and collect the
-    /// chrome mutators they return: what [`Self::write_chrome`] applies
-    /// beside the handles' in the same pass.
-    ///
-    /// Cost: each builder's reading of `changes`.
-    fn follow_chrome(
-        &mut self,
-        changes: &LayerChanges,
-        doc: &MindMapDocument,
-    ) -> Vec<(GfxMutatorTree, Anchors)> {
-        let pass = PassChanges {
-            changes,
-            doc: doc.doc(),
-            projector: &self.projector,
-        };
-        self.chrome_builders
-            .iter_mut()
-            .flat_map(|builder| builder.follow(&pass))
-            .collect()
-    }
-
     /// Apply `mutators` to the chrome layer under one journal and close
     /// it: the one way the chrome is written. A refusal reverts
     /// everything applied before it and is returned.
@@ -470,16 +611,31 @@ impl MapView {
         Ok(journal.close(&self.chrome))
     }
 
+    /// The status line the view shows now: NodeEdit's, read from the
+    /// document and the focused section
+    /// (`InteractionMode::node_edit_line`), or the active mode's
+    /// (`follow_mode`), or else the document's refusal, or else its
+    /// missing-font notice (#329). O(the edited node's children).
+    pub(crate) fn status(&self, doc: &MindMapDocument) -> Option<String> {
+        let node_edit = self.node_edit.and_then(|node| {
+            let focus = self.focused_section(doc, Some(node));
+            crate::application::app::InteractionMode::node_edit_line(doc.doc(), node, focus)
+        });
+        node_edit
+            .or_else(|| self.mode_line.clone())
+            .or_else(|| doc.status().map(str::to_string))
+            .or_else(|| doc.font_notice().map(str::to_string))
+    }
+
     /// Hand the status line to the renderer when it is not the one last
     /// shown: the active mode's (`follow_mode`), or else the document's
     /// refusal, or else its missing-font notice (#329). Returns whether
     /// it changed.
     fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
-        let status = self.mode_line.as_deref().or(doc.status()).or(doc.font_notice());
-        if status == self.shown_status.as_deref() {
+        let status = self.status(doc);
+        if status == self.shown_status {
             return false;
         }
-        let status = status.map(str::to_string);
         renderer.set_mode_status_text(status.clone());
         self.shown_status = status;
         true
@@ -513,6 +669,10 @@ impl MapView {
             projector,
             layers,
             stage,
+            editing,
+            node_edit,
+            dim,
+            range,
             ..
         } = self;
         let mut targets: Vec<NodeId> = match band_targets {
@@ -523,8 +683,30 @@ impl MapView {
         if let Some((axis, picked)) = picking {
             targets = stand_down(doc.doc(), targets, *axis, picked);
         }
+        // What an open editor edits shows its caret and its selected
+        // range, not the selection's tint.
+        if let Some(focus) = editing {
+            targets.retain(|&target| target != focus.host && target != focus.owner);
+        }
         let hovered: Option<NodeId> =
             hover_target.filter(|target| !targets.contains(target) && !source_targets.contains(target));
+        // NodeEdit's dim leaves every node another overlay stamps, so no
+        // two overlays share a run.
+        let active = node_edit.filter(|&node| doc.doc().get(node).is_some());
+        let excluded: Vec<NodeId> = if active.is_some() {
+            targets
+                .iter()
+                .chain(source_targets.iter())
+                .chain(hovered.iter())
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let want_range = editing.as_ref().and_then(|focus| {
+            let (start, end) = focus.range()?;
+            caret::range_glyphs(doc.doc(), projector, layers, focus.owner, start, end)
+        });
         let mut overlays: [(&mut Overlay, &[NodeId]); 3] = [
             (hover, hovered.as_slice()),
             (sources, source_targets.as_slice()),
@@ -532,6 +714,8 @@ impl MapView {
         ];
         if changes.is_none()
             && overlays.iter().all(|(overlay, want)| overlay.targets() == *want)
+            && dim.is_current(active, &excluded)
+            && range.is_current(want_range.as_ref())
             && stage.is_current(doc.doc())
         {
             return None;
@@ -555,20 +739,38 @@ impl MapView {
                 overlay.plan(&kept, changes.as_ref(), doc.doc(), projector, layers),
             ));
         }
+        let (dim_first, dim_second) =
+            dim.plan(active, &excluded, changes.as_ref(), doc.doc(), projector, layers);
         for (index, (overlay, want)) in overlays.iter_mut().enumerate() {
             plans.push((index, overlay.plan(want, None, doc.doc(), projector, layers)));
         }
+        let (range_plan, range_glyphs) = range.plan(want_range, changes.as_ref());
         let lifted = stage.lift(
             doc.doc(),
             projector,
             changes.as_ref(),
-            plans.iter().flat_map(|(_, planned)| planned.runs()),
+            plans
+                .iter()
+                .map(|(_, planned)| planned)
+                .chain([&dim_first, &dim_second, &range_plan])
+                .flat_map(|planned| planned.runs()),
             layers,
         );
-        let stamps = plans
-            .into_iter()
-            .map(|(index, planned)| overlays[index].0.write(planned, layers))
-            .collect();
+        // Every overlay's clears before any overlay's stamps: the overlays'
+        // own leaving runs, then the dim's clears and re-stamps, then the
+        // overlays' stamps, the dim's new stamps and the range's.
+        let kept = overlays.len();
+        let mut stamps: Vec<OverlayJournals> = Vec::with_capacity(plans.len() + 3);
+        let mut plans = plans.into_iter();
+        for (index, planned) in plans.by_ref().take(kept) {
+            stamps.push(overlays[index].0.write(planned, layers));
+        }
+        stamps.push(dim.write(dim_first, layers));
+        for (index, planned) in plans {
+            stamps.push(overlays[index].0.write(planned, layers));
+        }
+        stamps.push(dim.write(dim_second, layers));
+        stamps.push(range.write(range_plan, range_glyphs, layers));
         let presented = stage.stamp(lifted, doc.doc(), projector, layers);
         self.feed.extend(records);
         Some(Pass {
@@ -594,6 +796,7 @@ impl MapView {
         self.mode = mode.clone();
         self.source_targets = mode.sources().to_vec();
         self.mode_line = mode.status_line();
+        self.node_edit = mode.node_edit();
         if self.source_targets.is_empty() {
             self.hover_target = None;
         }
@@ -699,18 +902,8 @@ impl MapView {
     /// read what the pipeline wrote ([`Self::sync_for_test`]).
     #[cfg(test)]
     pub(crate) fn for_test(doc: &MindMapDocument) -> MapView {
-        Self::for_test_with_chrome(doc, Vec::new())
-    }
-
-    /// [`Self::for_test`], with `builders` registered as
-    /// [`Self::load_with_chrome`] registers them.
-    #[cfg(test)]
-    pub(crate) fn for_test_with_chrome(
-        doc: &MindMapDocument,
-        builders: Vec<Box<dyn ChromeBuilder>>,
-    ) -> MapView {
         let mut doc = MindMapDocument::new(doc.doc().clone(), None, doc.history_limit());
-        let (mut view, stamps) = Self::project(&mut doc, builders);
+        let (mut view, stamps) = Self::project(&mut doc);
         stamps.discard(&mut view.layers);
         view
     }
@@ -731,24 +924,16 @@ impl MapView {
         families: &[String],
     ) -> Option<SyncReport> {
         let pass = self.advance(doc, families);
-        // The chrome half, as `sync` writes it: the handles' and the
-        // builders' mutators, under one journal.
+        // The chrome half, as `sync` writes it, under one journal.
         let changes = pass.as_ref().and_then(|pass| pass.changes.as_ref());
-        let mut mutators = self.follow_handles(doc, changes);
-        if let Some(changes) = changes {
-            mutators.extend(self.follow_chrome(changes, doc));
-        }
-        let chrome: Vec<NodeId> = if mutators.is_empty() {
-            Vec::new()
-        } else {
-            match self.journal_chrome(&mutators) {
-                Ok(journal) => {
-                    let touched = journal.touched().map(|(id, _)| id).collect();
-                    journal.discard(&mut self.chrome);
-                    touched
-                }
-                Err(error) => panic!("a chrome mutator was refused: {error}"),
+        let chrome: Vec<NodeId> = match self.chrome_pass(doc, changes) {
+            Ok(Some(journal)) => {
+                let touched = journal.touched().map(|(id, _)| id).collect();
+                journal.discard(&mut self.chrome);
+                touched
             }
+            Ok(None) => Vec::new(),
+            Err(error) => panic!("a chrome mutator was refused: {error}"),
         };
         let Some(pass) = pass else {
             return (!chrome.is_empty()).then(|| SyncReport {
@@ -970,7 +1155,7 @@ pub(crate) struct SyncReport {
     /// played on — by layer, each once, in layer then id order.
     pub(crate) presented: Vec<(baumhard::projection::Layer, NodeId)>,
     /// The chrome elements the pass's chrome journal touched: the
-    /// handles' and the chrome builders'.
+    /// handles', the caret's and the section frames'.
     pub(crate) chrome: Vec<NodeId>,
 }
 

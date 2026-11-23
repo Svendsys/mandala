@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Keyboard-event dispatch. Routes `KeyboardInput` (Pressed only)
-//! through the console's steal, then the color picker's, then the
-//! action table, then the macro bindings, then the edit bindings.
-//!
-//! The map's own editors (V1-C8, #249) return with the issue that
-//! rebuilds them on the one writer, and take their place in this ladder
-//! then.
+//! through the modal-steal ladder — the console, the color picker, the
+//! single-line editor, the section text editor, as on `main` — then the
+//! action table (NodeEdit's context first while it is active), then
+//! type-to-edit on a selected path, then the macro bindings, then the
+//! edit bindings.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -14,7 +13,7 @@ use crate::application::platform::input::Key;
 
 use super::color_picker_flow::{handle_color_picker_clipboard_key, picker_op_for};
 use super::console_input::handle_console_key;
-use super::dispatch::families::edits;
+use super::dispatch::families::{edits, text};
 use super::input_context::InputHandlerContext;
 use super::HeldInput;
 
@@ -72,6 +71,40 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
         }
     }
 
+    // The text editors steal every key while open, the single-line one
+    // first, as on `main`. A key bound in the editor's context runs its
+    // Action through the funnel — commit, cancel, every cursor and delete
+    // primitive — so a macro, the console and IPC reach the same bodies;
+    // a key bound to anything else is swallowed, since the editor owns the
+    // keyboard; any other key is a literal (`families::text`).
+    if ctx.single_line_edit.is_open() {
+        match crate::application::app::single_line_edit::bound_action(
+            key_name.as_deref(),
+            ctx.modifiers,
+            ctx.keybinds,
+        ) {
+            Some(a) => {
+                let _ = super::dispatch::dispatch_action(a, ctx, None);
+            }
+            None => {
+                text::type_line(ctx, &logical_key);
+            }
+        }
+        return;
+    }
+    if ctx.text_edit.is_open() {
+        match text::text_key(key_name.as_deref(), ctx.modifiers, ctx.keybinds) {
+            Some(a) => {
+                let _ = super::dispatch::dispatch_action(a, ctx, None);
+            }
+            None => {
+                let (mut core, _) = ctx.split_borrow();
+                text::type_literal(&mut core, key_name.as_deref(), &logical_key);
+            }
+        }
+        return;
+    }
+
     let Some(k) = key_name.as_deref() else {
         return;
     };
@@ -80,15 +113,20 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
         ctx.modifiers.shift_key(),
         ctx.modifiers.alt_key(),
     );
-    let action = ctx.keybinds.action_for_context(
-        crate::application::keybinds::InputContext::Document,
-        k,
-        ctrl,
-        shift,
-        alt,
-    );
+    // In NodeEdit its own context is asked first, and falls through to
+    // the document's (`InputContext::NodeEdit::falls_through`).
+    let context = match ctx.interaction_mode.node_edit() {
+        Some(_) => crate::application::keybinds::InputContext::NodeEdit,
+        None => crate::application::keybinds::InputContext::Document,
+    };
+    let action = ctx.keybinds.action_for_context(context, k, ctrl, shift, alt);
     if let Some(a) = action {
         let _ = super::dispatch::dispatch_held_action(a, ctx, None, HeldInput::Key(k.to_string()));
+        return;
+    }
+    // Type-to-edit on a selected path's label, only for a key no Action
+    // claims, as on `main`.
+    if text::type_to_edit(ctx, &logical_key) {
         return;
     }
     let macro_id = ctx.keybinds.macro_for(k, ctrl, shift, alt).map(str::to_string);

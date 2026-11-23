@@ -9,6 +9,7 @@
 pub mod bounds_tests;
 pub mod deep_tests;
 pub mod deps_tests;
+pub mod edit_buffer_tests;
 pub mod edit_fuzz;
 #[cfg(test)]
 mod edit_fuzz_tests;

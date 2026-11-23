@@ -180,6 +180,14 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "present stop lift x"),
     (Sel::Node, "present list extra"),
     (Sel::Node, "present nope"),
+    // the editors (V1-C8)
+    (Sel::TwoSectionNode, "section edit section=0"),
+    (Sel::Node, "frame ring 0 edit"),
+    (Sel::Node, "frame ring 0 edit text=x"),
+    (Sel::Path, "path edit"),
+    (Sel::Path, "path label edit"),
+    (Sel::Path, "path label nope"),
+    (Sel::Multi, "node edit"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for

@@ -11,10 +11,12 @@
 //!   dispatches the `DoubleClick` binding on a double, and otherwise
 //!   holds what the press hit (`WasmInputState::pending_click`) plus a
 //!   `LastClick` snapshot for the eventual release.
-//! - **Released** ([`super::Borrowed::handle_mouse_released`]): clicks
-//!   what the press hit — its trigger runs on the press's hit test, the
-//!   selection updates through the shared `click_selection` and the view
-//!   syncs, native's `handle_click`.
+//! - **Released** ([`super::Borrowed::handle_mouse_released`]): an open
+//!   section editor keeps a release on its node or commits, NodeEdit
+//!   picks a release inside its node (`families::text::node_edit_click`),
+//!   and otherwise it clicks what the press hit — its trigger runs on the
+//!   press's hit test, the selection updates through the shared
+//!   `click_selection` and the view syncs, native's `handle_click`.
 //!
 //! Mirrors the native shape at `event_mouse_click.rs`; the WASM
 //! variant has no console / color-picker / drag-state intercepts so
@@ -110,13 +112,28 @@ impl super::Borrowed<'_> {
             if let Some(a) = action {
                 let dispatch_hit = dispatch::DispatchHit {
                     click_hit: hit,
+                    element: landed.as_ref().map(|landed| landed.element),
                     canvas_pos,
                 };
                 let outcome = {
-                    let mut core = input.input_context_core(renderer);
+                    let mut core = input.input_context_core(renderer, self.keybinds);
                     dispatch::action_core::dispatch_compatible(&a, &mut core, Some(&dispatch_hit))
                 };
-                if matches!(outcome, DispatchOutcome::Unhandled) {
+                let single_line = crate::application::app::dispatch::families::text::opens_single_line(
+                    input.document.doc(),
+                    dispatch_hit.element,
+                );
+                if matches!(outcome, DispatchOutcome::Unhandled) && single_line {
+                    // The sanctioned carve-out: the single-line editor is
+                    // native-only (CLAUDE.md "Single-line editor"), so a
+                    // double-click on a label, a ring, a cap, a portal end
+                    // or a path's content opens nothing here. Expected, so
+                    // `debug!`, not a warning on every such double-click.
+                    log::debug!(
+                        "run_wasm: double-click on {:?} opens the single-line editor, which is native-only",
+                        dispatch_hit.element
+                    );
+                } else if matches!(outcome, DispatchOutcome::Unhandled) {
                     crate::application::app::warn_unhandled_native_only_once(
                         &WARNED_NATIVE_ONLY_DOUBLE_CLICK,
                         dblclick_name,
@@ -150,6 +167,33 @@ impl super::Borrowed<'_> {
         let Some((hit, landed)) = self.input.pending_click.take() else {
             return;
         };
+        // An open section editor keeps a release on its node and commits
+        // on one anywhere else, before the click goes on, as native's
+        // modal ladder does (`families::text::release_keeps_editing`).
+        if let Some(node) = self.input.text_edit.session().map(|s| s.node()) {
+            if landed.as_ref().is_some_and(|hit| hit.node == node) {
+                return;
+            }
+            let mut core = self.input.input_context_core(self.renderer, self.keybinds);
+            let _ = dispatch::action_core::dispatch_compatible(
+                &crate::application::keybinds::Action::TextEditCommit,
+                &mut core,
+                None,
+            );
+        }
+        // In NodeEdit a release inside the node picks there; one outside
+        // leaves the mode and goes on to select what it landed on, as on
+        // native.
+        let input = &mut *self.input;
+        if crate::application::app::dispatch::families::text::node_edit_click(
+            &mut input.document,
+            &mut input.interaction_mode,
+            landed.as_ref(),
+        ) {
+            self.sync_view();
+            self.release_hover_if_outside();
+            return;
+        }
         let shift = self.input.modifiers.shift_key();
         let now_ms = self.input.clock.now_ms();
         let input = &mut *self.input;

@@ -101,6 +101,12 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     pub edits: &'a crate::application::edits::EditRegistry,
     /// The app clock: when a tap's trigger runs.
     pub clock: &'a crate::application::clock::AppClock,
+    /// The section text editor (`app::text_edit`), on both targets.
+    pub text_edit: &'a mut super::text_edit::TextEditor,
+    /// The resolved keybinds: what a double-click on empty canvas reads
+    /// to learn whether creating a node there is bound
+    /// (`families::text`).
+    pub keybinds: &'a crate::application::keybinds::ResolvedKeybinds,
 }
 
 /// Native-only extension carrying the modal / console / picker /

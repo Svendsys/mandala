@@ -156,6 +156,16 @@ impl InputHandlerContext<'_> {
             );
         let changed = match (self.document.as_mut(), self.view.as_mut()) {
             (Some(doc), Some(view)) => {
+                // An editor whose transaction the writer ended another
+                // way — an undo cancels it — closes, with nothing written;
+                // the view follows whichever is open (V1-C8).
+                use super::dispatch::families::text;
+                text::drop_stale_text(self.text_edit, doc, self.interaction_mode);
+                text::drop_stale_line(self.single_line_edit, doc);
+                view.follow_editor(
+                    text::text_focus(self.text_edit)
+                        .or_else(|| text::line_focus(self.single_line_edit, doc.doc())),
+                );
                 view.follow_mode(self.interaction_mode);
                 view.follow_picker(color_picker_flow::session::picking(self.color_picker_state));
                 view.sync(doc, self.renderer)

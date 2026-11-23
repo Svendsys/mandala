@@ -65,17 +65,9 @@ keybind_surface! {
         /// Detach every selected node from its parent.
         OrphanSelection => orphan_selection = ["Ctrl+O"],
         /// The umbrella "edit the selection" action.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Enter"]`.
-        EditSelection => edit_selection = [],
+        EditSelection => edit_selection = ["Enter"],
         /// As `edit_selection`, but the editor opens empty.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Backspace"]`.
-        EditSelectionClean => edit_selection_clean = [],
+        EditSelectionClean => edit_selection_clean = ["Backspace"],
         /// Enter NodeEdit mode. The umbrella `Enter`
         /// keybind dispatches `edit_selection` first (which fans out
         /// here for node-bearing selections), so users normally
@@ -90,11 +82,7 @@ keybind_surface! {
         /// `edit_selection` at Document, since the contexts don't
         /// overlap (the modal cascade picks NodeEdit over Document
         /// when NodeEdit is active).
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Enter"]`.
-        EnterSectionEdit => enter_section_edit = [],
+        EnterSectionEdit => enter_section_edit = ["Enter"],
         /// Open (or toggle) the console.
         OpenConsole => open_console = ["/"],
         /// Save the document to its bound path.
@@ -179,25 +167,13 @@ keybind_surface! {
 
         // ── Label Editor ─────────────────────────────────────────
         /// Discard the inline label editor's changes.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Escape"]`.
-        LabelEditCancel => label_edit_cancel = [],
+        LabelEditCancel => label_edit_cancel = ["Escape"],
         /// Commit the inline label editor.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Enter"]`.
-        LabelEditCommit => label_edit_commit = [],
+        LabelEditCommit => label_edit_commit = ["Enter"],
 
         // ── Text Editor ──────────────────────────────────────────
         /// Discard the inline text editor's changes.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Escape"]`.
-        TextEditCancel => text_edit_cancel = [],
+        TextEditCancel => text_edit_cancel = ["Escape"],
 
         // ── Frames and frame previews (V1-C5, #246) ──────────────
         /// Revert the open frame preview. Default unbound.
@@ -213,11 +189,7 @@ keybind_surface! {
         // ── Mouse-gesture Actions ────────────────────────────────
         /// Activate whatever the double-click hit — see
         /// [`Action::DoubleClickActivate`] for the four routes.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["DoubleClick"]`.
-        DoubleClickActivate => double_click_activate = [],
+        DoubleClickActivate => double_click_activate = ["DoubleClick"],
         /// Create an orphan node and open its editor. Intentionally
         /// unbound by default: the user found the empty-canvas
         /// double-click annoying, so it is opt-in.
@@ -278,126 +250,50 @@ keybind_surface! {
         SelectPrevSibling => select_prev_sibling = ["Alt+k"],
 
         // ── TextEdit cursor primitives ───────────────────────────
-        // The node text editor's keys, which V1-C8 (#249) rebuilds:
-        // a binding that matches dispatches its Action, and any other
-        // key is a literal character.
+        // The section text editor's keys: a binding that matches
+        // dispatches its Action, and any other key is a literal
+        // character.
         /// Move the editor cursor one grapheme left.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowLeft"]`.
-        TextEditCursorLeft => text_edit_cursor_left = [],
+        TextEditCursorLeft => text_edit_cursor_left = ["ArrowLeft"],
         /// Move the editor cursor one grapheme right.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowRight"]`.
-        TextEditCursorRight => text_edit_cursor_right = [],
+        TextEditCursorRight => text_edit_cursor_right = ["ArrowRight"],
         /// Move the editor cursor one visual line up.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowUp"]`.
-        TextEditCursorUp => text_edit_cursor_up = [],
+        TextEditCursorUp => text_edit_cursor_up = ["ArrowUp"],
         /// Move the editor cursor one visual line down.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowDown"]`.
-        TextEditCursorDown => text_edit_cursor_down = [],
+        TextEditCursorDown => text_edit_cursor_down = ["ArrowDown"],
         /// Jump the editor cursor to the start of the line.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Home"]`.
-        TextEditCursorHome => text_edit_cursor_home = [],
+        TextEditCursorHome => text_edit_cursor_home = ["Home"],
         /// Jump the editor cursor to the end of the line.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["End"]`.
-        TextEditCursorEnd => text_edit_cursor_end = [],
+        TextEditCursorEnd => text_edit_cursor_end = ["End"],
         /// Extend the selection one grapheme left.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+ArrowLeft"]`.
-        TextEditCursorLeftSelect => text_edit_cursor_left_select = [],
+        TextEditCursorLeftSelect => text_edit_cursor_left_select = ["Shift+ArrowLeft"],
         /// Extend the selection one grapheme right.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+ArrowRight"]`.
-        TextEditCursorRightSelect => text_edit_cursor_right_select = [],
+        TextEditCursorRightSelect => text_edit_cursor_right_select = ["Shift+ArrowRight"],
         /// Extend the selection one visual line up.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+ArrowUp"]`.
-        TextEditCursorUpSelect => text_edit_cursor_up_select = [],
+        TextEditCursorUpSelect => text_edit_cursor_up_select = ["Shift+ArrowUp"],
         /// Extend the selection one visual line down.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+ArrowDown"]`.
-        TextEditCursorDownSelect => text_edit_cursor_down_select = [],
+        TextEditCursorDownSelect => text_edit_cursor_down_select = ["Shift+ArrowDown"],
         /// Extend the selection to the start of the line.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+Home"]`.
-        TextEditCursorHomeSelect => text_edit_cursor_home_select = [],
+        TextEditCursorHomeSelect => text_edit_cursor_home_select = ["Shift+Home"],
         /// Extend the selection to the end of the line.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+End"]`.
-        TextEditCursorEndSelect => text_edit_cursor_end_select = [],
+        TextEditCursorEndSelect => text_edit_cursor_end_select = ["Shift+End"],
         /// Move the editor cursor one word left.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+ArrowLeft"]`.
-        TextEditWordLeft => text_edit_word_left = [],
+        TextEditWordLeft => text_edit_word_left = ["Ctrl+ArrowLeft"],
         /// Move the editor cursor one word right.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+ArrowRight"]`.
-        TextEditWordRight => text_edit_word_right = [],
+        TextEditWordRight => text_edit_word_right = ["Ctrl+ArrowRight"],
         /// Delete the grapheme before the editor cursor.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Backspace"]`.
-        TextEditDeleteBack => text_edit_delete_back = [],
+        TextEditDeleteBack => text_edit_delete_back = ["Backspace"],
         /// Delete the grapheme after the editor cursor.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Delete"]`.
-        TextEditDeleteForward => text_edit_delete_forward = [],
+        TextEditDeleteForward => text_edit_delete_forward = ["Delete"],
         /// Delete back through the current word.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+Backspace"]`.
-        TextEditDeleteWordBack => text_edit_delete_word_back = [],
+        TextEditDeleteWordBack => text_edit_delete_word_back = ["Ctrl+Backspace"],
         /// Delete forward through the current word.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+Delete"]`.
-        TextEditDeleteWordForward => text_edit_delete_word_forward = [],
+        TextEditDeleteWordForward => text_edit_delete_word_forward = ["Ctrl+Delete"],
         /// Insert a space at the editor cursor. The space bar arrives
         /// as a named key, not a character, so it types through this
         /// binding — the console's `ConsoleInsertSpace` shape.
         /// `Shift+Space` for the reason `console_insert_space` gives.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Space", "Shift+Space"]`.
-        TextEditInsertSpace => text_edit_insert_space = [],
+        TextEditInsertSpace => text_edit_insert_space = ["Space", "Shift+Space"],
         /// Commit the editor buffer and close.
         ///
         /// Default unbound — Enter is a literal `\n` in the
@@ -412,48 +308,20 @@ keybind_surface! {
         // Same routing as the TextEdit primitives but single-line —
         // no Up/Down/Word*.
         /// Move the label cursor one grapheme left.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowLeft"]`.
-        LabelEditCursorLeft => label_edit_cursor_left = [],
+        LabelEditCursorLeft => label_edit_cursor_left = ["ArrowLeft"],
         /// Move the label cursor one grapheme right.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["ArrowRight"]`.
-        LabelEditCursorRight => label_edit_cursor_right = [],
+        LabelEditCursorRight => label_edit_cursor_right = ["ArrowRight"],
         /// Jump the label cursor to the start of the buffer.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Home"]`.
-        LabelEditCursorHome => label_edit_cursor_home = [],
+        LabelEditCursorHome => label_edit_cursor_home = ["Home"],
         /// Jump the label cursor to the end of the buffer.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["End"]`.
-        LabelEditCursorEnd => label_edit_cursor_end = [],
+        LabelEditCursorEnd => label_edit_cursor_end = ["End"],
         /// Delete the grapheme before the label cursor.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Backspace"]`.
-        LabelEditDeleteBack => label_edit_delete_back = [],
+        LabelEditDeleteBack => label_edit_delete_back = ["Backspace"],
         /// Delete the grapheme after the label cursor.
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Delete"]`.
-        LabelEditDeleteForward => label_edit_delete_forward = [],
+        LabelEditDeleteForward => label_edit_delete_forward = ["Delete"],
         /// Insert a space at the label cursor (see
         /// `text_edit_insert_space`).
-        ///
-        /// Unbound until V1-C8 (#249) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Space", "Shift+Space"]`.
-        LabelEditInsertSpace => label_edit_insert_space = [],
+        LabelEditInsertSpace => label_edit_insert_space = ["Space", "Shift+Space"],
 
         // ── Console-verb Actions ─────────────────────────────────
         // These mirror typed console verbs; the user opts in by

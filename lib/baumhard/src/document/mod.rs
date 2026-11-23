@@ -39,6 +39,9 @@ pub mod defaults;
 pub mod deps;
 /// Edits: named, saved, undoable changes (§10.1, V1-D1).
 pub mod edit;
+/// [`EditBuffer`](edit_buffer::EditBuffer): the working copy of one text
+/// owner's spans, which a text editor stages whole (§9, V1-C8).
+pub mod edit_buffer;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;

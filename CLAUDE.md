@@ -297,12 +297,19 @@ the parity trajectory (or why none is owed):
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
-- **Text editing** — the node and section text editors and the
-  edge-label and portal-caption single-line editor were deleted with the
-  old model (V1-C3, #244), on both targets, and are rebuilt on the
-  document's writer by V1-C8 (#249). Their Actions stay, answered
-  unhandled with a `debug!` naming the owner, and ship unbound; the owner
-  decides their targets when it lands.
+- **Single-line editor** (`src/application/app/single_line_edit/`)
+  — inline editing of a label, a ring's poem, a cap, a portal end's
+  text or a path's content is native-only, as on `main`; the browser
+  has no single-line editor yet. The section text editor
+  (`app/text_edit/`) and node editing (`InteractionMode::NodeEdit`, its
+  section frames and dim) run on both targets. Consequence for input:
+  a double-click on a single-line target selects on both targets — its
+  first click's release selects as any click does — and opens the
+  editor only on native, surfaced as
+  `families::text::opens_single_line` rather than a `cfg`, and logged
+  at `debug!` on the browser side so the stop is observable. Parity
+  unblocks `Action::DoubleClickActivate` and `Action::EditSelection*`
+  flipping to `Compatible`; tracked in `work_plans/WASM_CONVERGENCE.md`.
 - **Drags that edit the map, and the color picker**
   (`src/application/app/live/`, `app/event_cursor_moved.rs`,
   `app/drain_frame.rs`, `app/color_picker_flow/`; V1-C7 #248) —
@@ -368,8 +375,8 @@ the parity trajectory (or why none is owed):
   gesture, the band drawn on the chrome layer (`view::band`) and the
   four `MapView` methods they use are native. On wasm32 the band's
   targets are therefore always `None`. The chrome layer's write path
-  (`MapView::apply_chrome`, a sync pass's handles and chrome builders) is
-  both targets'. Parity for the gesture itself
+  (`MapView::apply_chrome`, and a sync pass's handles, section frames
+  and caret) is both targets'. Parity for the gesture itself
   rides on the browser gaining a drag-state machine — a press
   needs somewhere to be pending before it can promote — and is
   not yet scheduled. What the browser lacks for it is the

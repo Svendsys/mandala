@@ -16,6 +16,7 @@ use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_cli
 use super::console_input::save_console_history;
 use super::dispatch::cross_dispatch::click_selection;
 use super::dispatch::families::edits::Projected;
+use super::dispatch::families::text;
 use super::dispatch::families::verbs::Host;
 use super::input_context::InputHandlerContext;
 use super::{
@@ -205,13 +206,30 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
             landed.as_ref(),
             canvas_pos,
             super::handle_tolerance(ctx.renderer),
+            ctx.interaction_mode.node_edit(),
         ),
         _ => None,
     };
-    // A press on a handle takes no part in a double-click (#218): it
-    // neither completes one nor starts one, so a second press on a
-    // handle grabs it again rather than open an editor under it.
-    if grab.is_some_and(super::live::grab::Grab::is_handle) {
+    let now = ctx.clock.now_ms();
+    // A double-click on what an open editor edits does not open it again:
+    // the editor is already there, and its transaction would refuse a
+    // second (as `main` guarded the re-open).
+    let editing_here = text::editing_under(ctx, landed.as_ref());
+    // A double-click resolves against its first press's hit (ruling on
+    // #249): a first press on a handle that was shown leaves no
+    // `last_click`, so the second press grabs the handle again (#218);
+    // a handle the first click brought up — a selected path's midpoint
+    // over its label — does not capture the second press, which completes
+    // the double-click on what the first press hit.
+    let doubled = !editing_here
+        && ctx
+            .last_click
+            .as_ref()
+            .is_some_and(|prev| is_double_click(prev, now, screen_pos, &hit));
+    // A press on a handle takes no other part in a double-click (#218): it
+    // starts none, so a second press on a shown handle grabs it again
+    // rather than open an editor under it.
+    if !doubled && grab.is_some_and(super::live::grab::Grab::is_handle) {
         *ctx.last_click = None;
         *ctx.drag_state = DragState::Pending {
             start_pos: screen_pos,
@@ -221,17 +239,13 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         };
         return;
     }
-    let now = ctx.clock.now_ms();
-    let doubled = ctx
-        .last_click
-        .as_ref()
-        .is_some_and(|prev| is_double_click(prev, now, screen_pos, &hit));
     if doubled {
         *ctx.last_click = None;
         *ctx.drag_state = DragState::None;
         if let Some(a) = gesture_action(MouseGesture::DoubleClick, ctx) {
             let dispatch_hit = super::dispatch::DispatchHit {
                 click_hit: hit,
+                element: landed.as_ref().map(|landed| landed.element),
                 canvas_pos,
                 held_by: Some(MouseButton::Left),
             };
@@ -261,8 +275,21 @@ fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     match std::mem::replace(ctx.drag_state, DragState::None) {
         DragState::Pending { grab: Some(grab), .. } if grab.is_handle() => {}
         DragState::Pending { hit, landed, .. } => {
+            // An open editor keeps a release on what it edits, and commits
+            // on one anywhere else, before the click goes on, as on `main`.
+            if text::release_keeps_editing(ctx, landed.as_ref()) {
+                return;
+            }
             if matches!(*ctx.interaction_mode, InteractionMode::Resize { .. }) {
                 *ctx.interaction_mode = InteractionMode::Default;
+            }
+            // In NodeEdit a click inside the node picks there; one outside
+            // leaves the mode and goes on to select what it landed on.
+            if let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) {
+                if text::node_edit_click(doc, ctx.interaction_mode, landed.as_ref()) {
+                    view.sync(doc, ctx.renderer);
+                    return;
+                }
             }
             handle_click(hit, landed, ctx.modifiers.shift_key(), ctx)
         }

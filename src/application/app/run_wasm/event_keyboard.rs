@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `WindowEvent::KeyboardInput` arm (Pressed only). Routes through
-//! the document-context Action lookup, then the macro fallback, then
-//! the edit-binding tier: the same Action → Macro → edit chain native
-//! runs in `event_keyboard::handle_keyboard_input`. The browser has no
-//! console or color picker to steal keys first, so the ladder starts at
-//! the keybind table.
+//! `WindowEvent::KeyboardInput` arm (Pressed only). Routes through the
+//! section text editor's steal, as native's ladder does, then the
+//! document-context Action lookup, then the macro fallback, then the
+//! edit-binding tier: the same Action → Macro → edit chain native runs in
+//! `event_keyboard::handle_keyboard_input`. The browser has no console,
+//! color picker or single-line editor to steal keys first (CLAUDE.md
+//! "Dual-target status").
 
 #![cfg(target_arch = "wasm32")]
 
@@ -13,7 +14,14 @@ use crate::application::platform::input::{ElementState, Key};
 
 use super::WasmMacroDispatchTarget;
 use crate::application::app::dispatch;
-use crate::application::app::dispatch::families::edits;
+use crate::application::app::dispatch::families::{edits, text};
+
+/// The modifiers `core` carries, copied out of its borrow.
+fn input_modifiers(
+    core: &crate::application::app::input_context_core::InputContextCore<'_>,
+) -> crate::application::platform::input::Modifiers {
+    *core.modifiers
+}
 
 impl super::Borrowed<'_> {
     /// `WindowEvent::KeyboardInput`. Returns whether to request a
@@ -23,12 +31,28 @@ impl super::Borrowed<'_> {
         if state != ElementState::Pressed {
             return false;
         }
-        let Some(k) = crate::application::keybinds::key_to_name(&logical_key) else {
-            return true;
-        };
+        let key_name = crate::application::keybinds::key_to_name(&logical_key);
         let input = &mut *self.input;
         let renderer = &mut *self.renderer;
         let keybinds = self.keybinds;
+        // The section editor steals every key while open: a key bound in
+        // its context runs its Action through the funnel, any other is a
+        // literal (`families::text`), as on native.
+        if input.text_edit.is_open() {
+            let mut core = input.input_context_core(renderer, keybinds);
+            match text::text_key(key_name.as_deref(), &input_modifiers(&core), keybinds) {
+                Some(a) => {
+                    let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
+                }
+                None => {
+                    text::type_literal(&mut core, key_name.as_deref(), &logical_key);
+                }
+            }
+            return true;
+        }
+        let Some(k) = key_name else {
+            return true;
+        };
         let (ctrl, shift, alt) = (
             input.modifiers.control_key(),
             input.modifiers.shift_key(),
@@ -45,7 +69,7 @@ impl super::Borrowed<'_> {
         // which native's `dispatch::dispatch_action` delegates to as well:
         // one source of truth for every Compatible arm across both targets.
         if let Some(a) = action {
-            let mut core = input.input_context_core(renderer);
+            let mut core = input.input_context_core(renderer, keybinds);
             let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
             return true;
         }
@@ -60,6 +84,7 @@ impl super::Borrowed<'_> {
             let mut target = WasmMacroDispatchTarget {
                 input,
                 renderer,
+                keybinds,
                 after_step: None,
             };
             if dispatch::macro_core::dispatch_macro(&id, &mut target) {

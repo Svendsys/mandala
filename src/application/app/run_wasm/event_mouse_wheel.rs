@@ -59,7 +59,7 @@ impl super::Borrowed<'_> {
             return true;
         };
         let outcome = {
-            let mut core = input.input_context_core(renderer);
+            let mut core = input.input_context_core(renderer, self.keybinds);
             dispatch::action_core::dispatch_compatible(&a, &mut core, None)
         };
         // The wheel has no sanctioned carve-out — every wheel

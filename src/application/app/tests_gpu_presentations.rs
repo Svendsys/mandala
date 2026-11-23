@@ -573,11 +573,6 @@ const REFUSED_LINES: &[(&str, &str)] = &[
     ),
 ];
 
-/// What a verb answers until its owner rebuilds it on the one writer. A
-/// line that answers so runs nothing; once its verb is back the line
-/// runs, and is compared like every other.
-const NOT_REBUILT: &str = "rebuilt on the one writer by";
-
 /// A portal end's line: the fixture holds no portal link, so it runs
 /// after `link kind=portal` makes one ([`sequences`]).
 const PORTAL_LINE: &str = "portal end=0 content=x size=12";
@@ -593,6 +588,8 @@ const AFTER_ANOTHER: &[&str] = &[
     "ReparentToTarget",
     "ConnectToTarget",
     "ReplaceFontFamily",
+    // A section is edited once NodeEdit picks it (V1-C8).
+    "EnterSectionEdit",
     // A label is placed once a path has one.
     "SetLabelPosition",
     PORTAL_LINE,
@@ -612,7 +609,7 @@ const AFTER_ANOTHER: &[&str] = &[
 /// make: a fast resize starts from a held button's drag (`act.action`
 /// has no button to hold it, and is refused for that, as on `main`), and
 /// is walked through the pointer in `tests_gpu_live`.
-const POINTER_GESTURES: &[&str] = &["FastResizeStart"];
+const POINTER_GESTURES: &[&str] = &["FastResizeStart", "DoubleClickActivate"];
 
 /// Every console verb, as the lines that run it. A verb of the registry
 /// with no row in [`LINES`] is a verb this test does not walk, and
@@ -672,6 +669,24 @@ fn sequences() -> Vec<Vec<Step>> {
             act("Undo"),
         ],
         vec![act("CreateOrphanNode"), act("Undo"), act("Redo")],
+        // The editors (V1-C8): a session typed into, then committed as
+        // one entry or canceled away.
+        vec![
+            act("EnterNodeEdit"),
+            act("EnterSectionEdit"),
+            act("TextEditInsertSpace"),
+            act("TextEditCommit"),
+        ],
+        vec![
+            act("EnterNodeEdit"),
+            act("EnterSectionEdit"),
+            act("TextEditCancel"),
+        ],
+        vec![
+            act("LabelEditOnSelection"),
+            act("LabelEditInsertSpace"),
+            act("LabelEditCommit"),
+        ],
         // A replacement rewrites an installed family the map names, so
         // one is named first (#329).
         vec![
@@ -740,11 +755,11 @@ fn ran(reply: &Value) -> bool {
 }
 
 /// Why `step` runs under no selection when it is the only step, if this
-/// walk knows a reason: its Action is of a family not yet rebuilt on
-/// the one writer, or a key of the console's own line, or one of
+/// walk knows a reason: its Action is a key of an open text editor's or
+/// of the console's own line, or one of
 /// [`AFTER_ANOTHER`]; its line is one of [`AFTER_ANOTHER`] or of
-/// [`REFUSED_LINES`], or of a verb not yet rebuilt (a reply says so).
-fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
+/// [`REFUSED_LINES`].
+fn excuse(step: &Step) -> Option<&'static str> {
     match step {
         Step::Act(action) => {
             let kind = match action {
@@ -753,8 +768,13 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
                 _ => "",
             };
             let action: Action = serde_json::from_value(action.clone()).expect("an Action");
-            if super::dispatch::families::dispatch(&action).is_some() {
-                Some("its family is not rebuilt on the one writer yet")
+            let context = crate::application::keybinds::ActionKind::from(&action).context();
+            if matches!(
+                context,
+                crate::application::keybinds::InputContext::TextEdit
+                    | crate::application::keybinds::InputContext::LabelEdit
+            ) {
+                Some("a key of an open text editor's, which no step here opens")
             } else if kind.starts_with("Console") {
                 Some("a key of the console's own line, which is not open")
             } else if AFTER_ANOTHER.contains(&kind) {
@@ -771,14 +791,7 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
         Step::Line(line) => REFUSED_LINES
             .iter()
             .find(|(refused, _)| refused == line)
-            .map(|(_, why)| *why)
-            .or_else(|| {
-                replies
-                    .iter()
-                    .filter_map(|reply| reply["error"]["message"].as_str())
-                    .any(|message| message.contains(NOT_REBUILT))
-                    .then_some("its verb is not rebuilt on the one writer yet")
-            }),
+            .map(|(_, why)| *why),
     }
 }
 
@@ -901,7 +914,7 @@ fn test_every_action_verb_and_edit_leaves_what_it_leaves_with_nothing_playing() 
     let mut idle = Vec::new();
     for (steps, any, replies) in &ran_once {
         match &steps[..] {
-            [step] => match (any, excuse(step, replies)) {
+            [step] => match (any, excuse(step)) {
                 (true, None) | (false, Some(_)) => {}
                 (false, None) => idle.push(format!(
                     "`{}` ran under no selection ({}): a mistyped line or payload compares nothing",

@@ -75,7 +75,7 @@ impl super::Borrowed<'_> {
                 let Some(a) = d.action else {
                     return idle_redraw;
                 };
-                let mut core = input.input_context_core(renderer);
+                let mut core = input.input_context_core(renderer, self.keybinds);
                 let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
                 // When the bound Action is `NativeOnly` — the
                 // shipped `LongPress` default, `EnterResizeMode`, is
@@ -98,7 +98,7 @@ impl super::Borrowed<'_> {
                 true
             }
             TouchStep::Effect(effect) => {
-                let mut core = input.input_context_core(renderer);
+                let mut core = input.input_context_core(renderer, self.keybinds);
                 dispatch::apply_touch_effect(effect, &mut core);
                 true
             }

@@ -14,7 +14,10 @@
 //!   and `auto` anchors, and keeps its spans, caps, label, visibility and
 //!   zoom;
 //! - `path cap start=… end=…` sets a cap's text, one span, or removes it
-//!   with `none`.
+//!   with `none`;
+//! - `path edit` opens the single-line editor on the one selected path's
+//!   content spans, and `path label edit` on its label — inserted first
+//!   when it has none (V1-C8; ruling K3 on #249).
 //!
 //! A portal link draws no path, so it is passed over
 //! (`crate::application::fields::path`). Values are read in the
@@ -101,7 +104,27 @@ const SUBVERBS: &[Subverb] = &[
     ),
     Subverb::bare("cap", "caps", "set or remove the caps at its ends")
         .taking(&[Form::opt(&["start", "end"])]),
+    Subverb::bare(
+        "edit",
+        "editor",
+        "edit the path's content in the single-line editor",
+    ),
+    Subverb::nested("label", "editor", "edit the path's label", &LABEL),
 ];
+
+const LABEL_SUBVERBS: &[Subverb] = &[Subverb::bare(
+    "edit",
+    "editor",
+    "edit the label in the single-line editor; a path with none gets one",
+)];
+
+/// `path label …`: its one subverb, `edit`.
+pub static LABEL: Grammar = Grammar {
+    label: "path label",
+    subverb_sets: &[LABEL_SUBVERBS],
+    key_sets: &[],
+    bare: None,
+};
 
 pub static GRAMMAR: Grammar = Grammar {
     label: "path",
@@ -117,6 +140,7 @@ enum Route {
     Curve,
     Reset,
     Cap,
+    Edit,
 }
 
 const ROUTES: &Routes<Route> = &[
@@ -124,6 +148,7 @@ const ROUTES: &Routes<Route> = &[
     ("curve", Route::Curve),
     ("reset", Route::Reset),
     ("cap", Route::Cap),
+    ("edit", Route::Edit),
 ];
 
 /// The names [`ROUTES`] handles, for the registry test in
@@ -131,6 +156,21 @@ const ROUTES: &Routes<Route> = &[
 #[cfg(test)]
 pub(crate) fn routed_names() -> Vec<&'static str> {
     route::names(ROUTES)
+}
+
+/// Which handler each subverb of [`LABEL`] runs.
+#[derive(Clone, Copy)]
+enum LabelRoute {
+    Edit,
+}
+
+const LABEL_ROUTES: &Routes<LabelRoute> = &[("edit", LabelRoute::Edit)];
+
+/// The names [`LABEL_ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn label_routed_names() -> Vec<&'static str> {
+    route::names(LABEL_ROUTES)
 }
 
 pub const COMMAND: Command = Command {
@@ -160,6 +200,12 @@ fn execute_path(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return super::edit(eff, steps, "path");
         }
     };
+    if std::ptr::eq(descent.level, &LABEL) {
+        return match route::lookup(LABEL_ROUTES, subverb) {
+            Some(LabelRoute::Edit) => edit_path(eff, true),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
+        };
+    }
     let doc = eff.document();
     let (steps, label) = match route::lookup(ROUTES, subverb) {
         Some(Route::Straight) => (path::geometry(doc, Geometry::Straight), "path straight"),
@@ -177,9 +223,30 @@ fn execute_path(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 "path cap",
             )
         }
+        Some(Route::Edit) => return edit_path(eff, false),
         None => return ExecResult::err(route::miss(descent.level, subverb)),
     };
     super::edit(eff, steps, label)
+}
+
+/// `path edit` and `path label edit`: the single-line editor on the one
+/// selected connector's or line link's content spans, or on its label.
+fn edit_path(eff: &mut ConsoleEffects, on_label: bool) -> ExecResult {
+    use crate::application::console::EditorOpen;
+    let verb = if on_label { "path label edit" } else { "path edit" };
+    let doc = eff.document();
+    let path = match super::only_selected(doc) {
+        Some(only) if crate::application::view::handles::is_line_path(doc.doc(), only) => only,
+        _ => return ExecResult::err(format!("{verb}: select one connector or line link")),
+    };
+    match on_label {
+        true => super::open_editor(
+            eff,
+            EditorOpen::Label(path),
+            "path label edit: opening the editor",
+        ),
+        false => super::open_editor(eff, EditorOpen::Line(path), "path edit: opening the editor"),
+    }
 }
 
 /// The fields a `path` line's keys set, each from its last occurrence

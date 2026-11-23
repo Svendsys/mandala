@@ -9,9 +9,10 @@
 //!   handles are drawn, and dragging one resizes it, as a transaction
 //!   (`Action::EnterResizeMode`'s mode; V1-C7). Refused for a selection
 //!   that is not one node or section.
-//! - `mode node-edit` — NodeEdit mode on the selection's node, rebuilt
-//!   with node editing by V1-C8 (#249); until then the subverb refuses
-//!   naming that issue.
+//! - `mode node-edit` — NodeEdit mode on the selection's node (V1-C8):
+//!   the other nodes dimmed, its sections outlined, a click on one
+//!   selecting it. Refused for a selection that is not one node or one of
+//!   its sections.
 //!
 //! `mode show` is intentionally absent: no surface reports the active
 //! mode to the console, so there is no verb for it.
@@ -116,7 +117,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 None => ExecResult::err(RESIZE_NEEDS_ONE),
             }
         }
-        Route::NodeEdit => super::rebuilt_by("mode node-edit", super::TEXT_OWNER),
+        Route::NodeEdit => super::enter_node_edit(eff, "mode node-edit"),
     }
 }
 
@@ -195,18 +196,64 @@ mod tests {
         assert!(side.is_none());
     }
 
-    /// `mode node-edit` refuses with its owner named, and requests
-    /// nothing of the dispatcher.
+    /// `mode node-edit` asks for NodeEdit on the one selected node and
+    /// closes the console; on one of the node's sections, on that node.
+    /// Control: with nothing selected it is refused, asks for nothing and
+    /// leaves the console open.
     #[test]
-    fn test_mode_node_edit_refuses_naming_its_owner() {
+    fn test_mode_node_edit_enters_node_edit_on_the_selected_node() {
         let mut doc = MindMapDocument::new_blank(None, 50);
-        let (result, side, close) = run_mode("mode node-edit", &mut doc);
-        match result {
-            ExecResult::Err(message) => assert!(message.contains(super::super::TEXT_OWNER), "{message}"),
-            other => panic!("mode node-edit must refuse: {other:?}"),
+        let (refused, side, close) = run_mode("mode node-edit", &mut doc);
+        assert!(
+            matches!(refused, ExecResult::Err(_)),
+            "nothing selected: {refused:?}"
+        );
+        assert!(side.is_none() && !close);
+
+        doc.create_root_for_test();
+        let node = doc
+            .doc()
+            .node_by_ident(baumhard::document::ids::NodeIdent(1))
+            .expect("the root is node 1");
+        let section = doc.doc().children(node).next().expect("a new node has a section");
+        for selected in [node, section] {
+            doc.selection.select_only(selected);
+            let (result, side, close) = run_mode("mode node-edit", &mut doc);
+            assert!(matches!(result, ExecResult::Ok(_)), "{result:?}");
+            assert!(
+                matches!(side, Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::NodeEdit { node: n })) if n == node),
+                "on {selected:?}"
+            );
+            assert!(close);
         }
-        assert!(side.is_none());
-        assert!(!close);
+    }
+
+    /// `mode node-edit` says "pick" only where there is something to pick:
+    /// on a node of one section it says it is editing the node; on a node
+    /// of two (the text fixture's node 1), that a section is to be picked.
+    #[test]
+    fn test_mode_node_edit_says_pick_only_on_a_node_of_several_sections() {
+        let path = format!(
+            "{}/src/application/app/dispatch/families/fixtures/text.mandala.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut doc = MindMapDocument::load(&path, baumhard::document::writer::DEFAULT_HISTORY_LIMIT)
+            .expect("the fixture loads");
+        for (ident, said) in [
+            (2, "mode node-edit: editing the node"),
+            (1, "mode node-edit: editing the node; pick a section"),
+        ] {
+            let node = doc
+                .doc()
+                .node_by_ident(baumhard::document::ids::NodeIdent(ident))
+                .expect("in the fixture");
+            doc.selection.select_only(node);
+            let (result, _, _) = run_mode("mode node-edit", &mut doc);
+            assert!(
+                matches!(&result, ExecResult::Ok(line) if line == said),
+                "node {ident}: {result:?}"
+            );
+        }
     }
 
     #[test]

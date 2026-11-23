@@ -46,6 +46,13 @@ pub(in crate::application::app) enum Grab {
         /// the marker.
         label: Option<NodeId>,
     },
+    /// A section of the node NodeEdit edits (#248's ruling C2: the
+    /// section move's entry is node editing's): a drag of it moves the
+    /// section within its node.
+    Section {
+        /// The section.
+        section: NodeId,
+    },
 }
 
 impl Grab {
@@ -64,13 +71,15 @@ impl Grab {
             Grab::Handle(Handle::Path { .. }) => "path_handle",
             Grab::Label { .. } => "label",
             Grab::PortalEnd { .. } => "portal_end",
+            Grab::Section { .. } => "section",
         }
     }
 }
 
 /// What a press at `canvas` grabs: a handle within `tolerance` (canvas
 /// units) of the pointer, or else the label or portal end `landed` — the
-/// press's one hit test — is on. `None` for anything else.
+/// press's one hit test — is on, or, in NodeEdit on `node_edit`, the
+/// section of it the press is on. `None` for anything else.
 ///
 /// Cost: O(the shown handles); O(1) for the hit.
 pub(in crate::application::app) fn press_grab(
@@ -79,12 +88,16 @@ pub(in crate::application::app) fn press_grab(
     landed: Option<&Hit>,
     canvas: Vec2,
     tolerance: f32,
+    node_edit: Option<NodeId>,
 ) -> Option<Grab> {
     if let Some(handle) = view.handle_at(canvas, tolerance) {
         return Some(Grab::Handle(handle));
     }
     let element = landed?.element;
     match kind_of(doc, element)? {
+        DocKind::Section if node_edit.is_some() && doc.parent(element) == node_edit => {
+            Some(Grab::Section { section: element })
+        }
         DocKind::Label => {
             let host = doc.parent(element)?;
             match kind_of(doc, host)? {
@@ -142,6 +155,7 @@ pub(in crate::application::app) fn gesture_for(
                 start,
             })
         }
+        Grab::Section { section } => move_section(doc, section),
     }
 }
 
@@ -272,15 +286,9 @@ pub(in crate::application::app) fn move_nodes(
 }
 
 /// A move of `section` within its node, from its offset now: what a
-/// section drag in node editing starts (V1-C8 enters it, #248's ruling
-/// on its C2). `None` for an element that is not a section.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "node editing (V1-C8, #249) enters a section drag; #248's ruling C2 gives it no Default-mode entry"
-    )
-)]
+/// section drag in node editing starts ([`Grab::Section`]; #248's ruling
+/// on its C2 gives it no Default-mode entry). `None` for an element that
+/// is not a section.
 pub(in crate::application::app) fn move_section(doc: &Document, section: NodeId) -> Option<Gesture> {
     let start = offset_of(doc, section)?;
     Some(Gesture::MoveSection { section, start })

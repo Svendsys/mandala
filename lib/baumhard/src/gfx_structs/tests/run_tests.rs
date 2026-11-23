@@ -441,7 +441,7 @@ fn test_run_override_ops_write_their_range_and_materialize_the_rest_neutral() {
 
 /// Each op writes only its own vector over only its range. The first
 /// write to a run without overrides materializes `GlyphOverrides::new`
-/// for all of it — so the other two vectors are there, neutral — and a
+/// for all of it — so the other three vectors are there, neutral — and a
 /// later op on another vector keeps what the first wrote. `Clear` drops
 /// them all.
 pub fn do_run_override_ops_write_their_range_and_materialize_the_rest_neutral() {
@@ -474,6 +474,7 @@ pub fn do_run_override_ops_write_their_range_and_materialize_the_rest_neutral() 
         &neutral_scales,
         "scales materialized neutral"
     );
+    assert_eq!(run.overrides().fade(), &[1.0; 4], "fades materialized neutral");
     assert_eq!(
         changed_run_fields(base.glyph_run().unwrap(), run),
         vec!["overrides"],
@@ -559,6 +560,127 @@ pub fn do_run_override_ops_write_their_range_and_materialize_the_rest_neutral() 
     let run = element.glyph_run().unwrap();
     assert!(run.overrides().is_empty());
     assert_eq!(run.overrides(), &GlyphOverrides::none());
+}
+
+#[test]
+fn test_run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it() {
+    do_run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it();
+}
+
+/// **The fade channel** (V1-C8, ruling K2 on #249). A `Fade` writes only
+/// the fade of its range, and the first write materializes it neutral —
+/// `1.0` — on every glyph, as each other vector is materialized; the
+/// other ops leave it at `1.0`, a fade beside a color and a scale keeps
+/// all three, and `Clear` drops it with the rest. `same_state` counts
+/// it: two runs that differ in fade alone are not the same state, and
+/// two that agree are (the control).
+pub fn do_run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it() {
+    let base = GfxElement::new_run(run_of(four_glyph_shape(), Vec2::ZERO), 0, 5);
+    let faded = with_ops_on(
+        &base,
+        vec![RunOverrideOp::Fade {
+            range: 1..3,
+            value: 0.5,
+        }],
+    );
+    let run = faded.glyph_run().unwrap();
+    assert_eq!(run.overrides().fade(), &[1.0, 0.5, 0.5, 1.0]);
+    assert_eq!(run.overrides().offset(), &[Vec2::ZERO; 4]);
+    assert_eq!(run.overrides().color(), &[None; 4]);
+    assert_eq!(run.overrides().scale(), &[1.0; 4]);
+
+    let colored = with_ops(
+        four_glyph_shape(),
+        vec![RunOverrideOp::Color {
+            range: 0..1,
+            value: Some(RED),
+        }],
+    );
+    assert_eq!(
+        colored.glyph_run().unwrap().overrides().fade(),
+        &[1.0; 4],
+        "another op materializes the fade neutral"
+    );
+
+    let all = with_ops(
+        four_glyph_shape(),
+        vec![
+            RunOverrideOp::Color {
+                range: 0..2,
+                value: Some(RED),
+            },
+            RunOverrideOp::Scale {
+                range: 1..2,
+                value: 2.0,
+            },
+            RunOverrideOp::Fade {
+                range: 0..4,
+                value: 0.5,
+            },
+        ],
+    );
+    let run = all.glyph_run().unwrap();
+    assert_eq!(run.overrides().color(), &[Some(RED), Some(RED), None, None]);
+    assert_eq!(run.overrides().scale(), &[1.0, 2.0, 1.0, 1.0]);
+    assert_eq!(
+        run.overrides().fade(),
+        &[0.5; 4],
+        "beside the color and the scale"
+    );
+
+    let mut cleared = all.clone();
+    apply(&mut cleared, GfxMutation::RunOverrides(RunOverrideOp::Clear));
+    assert_eq!(cleared.glyph_run().unwrap().overrides(), &GlyphOverrides::none());
+
+    // Of one shaping, so the runs compare by state alone.
+    let other = with_ops_on(
+        &base,
+        vec![RunOverrideOp::Fade {
+            range: 1..3,
+            value: 0.25,
+        }],
+    );
+    assert!(!faded.same_state(&other), "a fade alone tells two runs apart");
+    let again = with_ops_on(
+        &base,
+        vec![RunOverrideOp::Fade {
+            range: 1..3,
+            value: 0.5,
+        }],
+    );
+    assert!(
+        faded.same_state(&again),
+        "control: an equal fade is the same state"
+    );
+}
+
+#[test]
+fn test_run_fade_has_no_json_spelling() {
+    do_run_fade_has_no_json_spelling();
+}
+
+/// A fade is the view's own and no file can name one: it does not
+/// serialize, and a mutation that spells one does not parse. Control:
+/// a scale, its neighbor, round-trips.
+pub fn do_run_fade_has_no_json_spelling() {
+    let fade = GfxMutation::RunOverrides(RunOverrideOp::Fade {
+        range: 0..1,
+        value: 0.5,
+    });
+    assert!(serde_json::to_string(&fade).is_err(), "a fade does not serialize");
+    assert!(
+        serde_json::from_str::<GfxMutation>(
+            r#"{"RunOverrides":{"Fade":{"range":{"start":0,"end":1},"value":0.5}}}"#
+        )
+        .is_err(),
+        "and a file cannot name one"
+    );
+    let scale = GfxMutation::RunOverrides(RunOverrideOp::Scale {
+        range: 0..1,
+        value: 0.5,
+    });
+    let wire = serde_json::to_string(&scale).unwrap();
+    assert_eq!(serde_json::from_str::<GfxMutation>(&wire).unwrap(), scale);
 }
 
 #[test]

@@ -74,6 +74,8 @@ impl<'a> IpcCommandTarget<'a> {
         ipc_state::OpenModals {
             console: self.init.console_state.is_open(),
             picker: self.init.color_picker_state.as_open().is_some(),
+            single_line: self.init.single_line_edit.is_open(),
+            text: self.init.text_edit.is_open(),
         }
     }
 
@@ -91,10 +93,11 @@ impl<'a> IpcCommandTarget<'a> {
     fn place_pointer(&mut self, point: Point) -> DispatchHit {
         let (surface, canvas) = self.resolve(point);
         self.init.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
-        let click_hit =
-            super::compute_click_hit(self.init.document.as_ref(), self.init.view.as_mut(), canvas);
+        let (landed, click_hit) =
+            super::press_hit(self.init.document.as_ref(), self.init.view.as_mut(), canvas);
         DispatchHit {
             click_hit,
+            element: landed.map(|landed| landed.element),
             canvas_pos: canvas,
             // A synthetic pointer holds no button.
             held_by: None,
@@ -204,10 +207,15 @@ impl CommandTarget for IpcCommandTarget<'_> {
                 "text": self.init.renderer.mode_status_text(),
                 "document": self.init.document.as_ref().and_then(MindMapDocument::status),
             }),
-            ShellState::Editors => ipc_state::editors_to_ipc_json(
-                ipc_state::console_to_ipc_json(&self.init.console_state),
-                ipc_state::picker_to_ipc_json(&self.init.color_picker_state),
-            ),
+            ShellState::Editors => {
+                let doc = self.init.document.as_ref().map(MindMapDocument::doc);
+                ipc_state::editors_to_ipc_json(
+                    ipc_state::console_to_ipc_json(&self.init.console_state),
+                    ipc_state::picker_to_ipc_json(&self.init.color_picker_state),
+                    ipc_state::single_line_to_ipc_json(&self.init.single_line_edit, doc),
+                    ipc_state::text_edit_to_ipc_json(&self.init.text_edit, doc),
+                )
+            }
         }
     }
 

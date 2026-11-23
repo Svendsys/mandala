@@ -57,6 +57,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub console_history: &'a mut Vec<String>,
     /// Glyph-wheel color-picker state.
     pub color_picker_state: &'a mut ColorPickerState,
+    /// The section text editor (`app::text_edit`).
+    pub text_edit: &'a mut super::text_edit::TextEditor,
+    /// The single-line editor (`app::single_line_edit`).
+    pub single_line_edit: &'a mut super::single_line_edit::SingleLineEditor,
     /// Previous click (time, position, hit) for double-click detection.
     pub last_click: &'a mut Option<LastClick>,
     /// Last-known cursor position in screen space.
@@ -165,6 +169,8 @@ impl<'a> InputHandlerContext<'a> {
                 interaction_mode: &mut *self.interaction_mode,
                 edits: self.edits,
                 clock: &*self.clock,
+                text_edit: &mut *self.text_edit,
+                keybinds: self.keybinds,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,

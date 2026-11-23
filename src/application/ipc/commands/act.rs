@@ -211,8 +211,8 @@ fn native_only_refusal(action: &Action, browser: bool) -> Option<String> {
         format!(
             "{action:?} is native-only: its body needs a system the browser does not have yet \
              (`WasmCompatibility::NativeOnly`, work_plans/WASM_CONVERGENCE.md). On the browser, \
-             `act.action` runs the `Compatible` actions, which is every action a browser keystroke \
-             can run"
+             `act.action` runs only the `Compatible` actions; a keystroke, a gesture or a macro step \
+             there runs any action's cross-platform half, and a native-only half answers unhandled"
         )
     })
 }
@@ -614,12 +614,14 @@ mod tests {
         }
     }
 
-    /// `act.console` running a subverb its owner rebuilds answers with the
-    /// refusal as a `console_error`, naming the owner — the same text the
-    /// console prints — and the document is left as it was.
+    /// `act.console` running a line its verb refuses answers with the
+    /// refusal as a `console_error` — the same text the console prints,
+    /// the verb naming itself — and the document is left as it was:
+    /// `mode node-edit` with nothing selected.
     #[test]
-    fn test_act_console_reports_a_rebuilt_verbs_refusal() {
+    fn test_act_console_reports_a_verbs_refusal() {
         let mut doc = crate::application::document::tests_common::testament();
+        doc.selection.clear();
         let revision = doc.revision();
         let ParseResult::Ok { cmd, args } = parse("mode node-edit") else {
             panic!("`mode node-edit` must parse");
@@ -632,10 +634,6 @@ mod tests {
         assert!(
             message.starts_with("mode node-edit: "),
             "the verb names itself: {message}"
-        );
-        assert!(
-            message.contains("V1-C8 (#249)"),
-            "the error names the owner: {message}"
         );
         assert_eq!(doc.revision(), revision);
     }

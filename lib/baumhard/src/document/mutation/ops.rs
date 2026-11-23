@@ -584,8 +584,10 @@ fn nudge(position: Vec2, delta: Vec2) -> Vec2 {
 }
 
 /// Apply `op` to `style`, the text style of an element of `kind` whose
-/// parent handed down `inherited`. O(1).
-fn apply_text(op: &TextOp, style: &mut TextStyle, kind: DocKind, inherited: &DocInherited) {
+/// parent handed down `inherited`: what a walk applies, and what an
+/// [`EditBuffer`](crate::document::edit_buffer::EditBuffer) applies to
+/// the spans it holds. O(1).
+pub(crate) fn apply_text(op: &TextOp, style: &mut TextStyle, kind: DocKind, inherited: &DocInherited) {
     match op {
         TextOp::SetFont(font) => style.font.clone_from(font),
         TextOp::SetSize(size) => style.size = *size,
