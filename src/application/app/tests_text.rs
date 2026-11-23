@@ -8,7 +8,9 @@
 //! every other node once and re-stamps only what a pass rewrote; the
 //! section frames outline a node of several sections; the editor's
 //! selected range is tinted and the selection tint stands down on what is
-//! edited.
+//! edited; and the caret and the range are read from the run each owner
+//! draws, whether it is a unit of its own or a slot of its path's or its
+//! portal's.
 
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
@@ -477,4 +479,68 @@ fn test_the_editors_range_is_tinted_and_the_selection_stands_down() {
     view.sync_for_test(&mut doc).expect("the editor closed");
     assert!(view.highlighted().contains(&a), "control: the tint is back");
     assert!(view.range_tint().stamped().is_none());
+}
+
+/// **The caret and the range are read from the owner's own run** — for a
+/// ring, a unit of its own, and for what is a slot of its path's or its
+/// portal's unit: a connector's content, its cap and its label, a portal
+/// end's text and its label. At each owner the caret before its first
+/// grapheme and after its last are drawn apart, a range of two graphemes
+/// of a longer owner covers glyphs, and no two owners put the caret before
+/// their first grapheme in one place (a sibling slot's run is not the
+/// owner's).
+///
+/// Control, seen red: looking the run up by the owner's id alone
+/// (`Projector::glyphs_of(owner)`, the code this replaced) finds no run for
+/// a label, a cap or a portal end, so the caret falls back to where the
+/// owner is drawn whatever the caret is, and the range covers nothing.
+#[test]
+fn test_the_caret_and_range_are_read_from_each_owners_own_run() {
+    use crate::application::view::caret::{caret_place, range_glyphs};
+    let doc = text_fixture();
+    let view = MapView::for_test(&doc);
+    let (a, b) = (node(&doc, 1), node(&doc, 2));
+    let connector = child(&doc, b, DocKind::Connector);
+    let portal = children_of_kind(doc.doc(), a, DocKind::Link)
+        .nth(1)
+        .expect("node 1's second link is a portal");
+    let end = child(&doc, portal, DocKind::PortalEnd);
+    let owners = [
+        (
+            "the ring",
+            child(&doc, child(&doc, a, DocKind::Frame), DocKind::Ring),
+            15,
+        ),
+        ("the connector's content", connector, 1),
+        ("the connector's cap", child(&doc, connector, DocKind::CapEnd), 1),
+        ("the connector's label", child(&doc, connector, DocKind::Label), 5),
+        ("the portal end's text", end, 1),
+        ("the portal end's label", child(&doc, end, DocKind::Label), 3),
+    ];
+    let mut firsts: Vec<(&str, glam::Vec2)> = Vec::new();
+    for (what, owner, len) in owners {
+        let place = |caret| {
+            caret_place(doc.doc(), view.projector(), view.layers(), owner, caret)
+                .unwrap_or_else(|| panic!("{what} is drawn"))
+                .0
+        };
+        let (first, last) = (place(0), place(len));
+        assert!(
+            first.distance(last) > 0.5,
+            "{what}: the caret before and after its text is drawn in one place, {first}"
+        );
+        if len > 2 {
+            assert!(
+                range_glyphs(doc.doc(), view.projector(), view.layers(), owner, 0, 2).is_some(),
+                "{what}: a range of its text covers glyphs"
+            );
+        }
+        for &(other, at) in &firsts {
+            assert!(
+                first.distance(at) > 0.5,
+                "{what} puts its caret where {other} does, {first}"
+            );
+        }
+        firsts.push((what, first));
+    }
 }

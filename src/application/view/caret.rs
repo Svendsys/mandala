@@ -226,7 +226,7 @@ pub(crate) fn caret_place(
         };
         return Some(box_caret(shaped, origin, align, &graphemes, caret));
     }
-    let run = owner_run(projector, layers, owner);
+    let run = owner_run(doc, projector, layers, owner).map(|(_, _, run)| run);
     let drawn = run.and_then(|run| match run.shaped() {
         RunShape::Box(shaped) => Some(box_caret(shaped, run.origin(), Align::Center, &graphemes, caret)),
         RunShape::Path { run: shaped, placed } => path_caret(shaped, placed, run.origin(), &graphemes, caret),
@@ -234,14 +234,32 @@ pub(crate) fn caret_place(
     drawn.or_else(|| fallback_place(doc, projector, owner))
 }
 
-/// The run `owner` draws, as its layer holds it. O(its slots).
-fn owner_run<'l>(projector: &Projector, layers: &'l GlyphLayers, owner: NodeId) -> Option<&'l GlyphRunData> {
-    projector.glyphs_of(owner).into_iter().find_map(|(layer, glyph)| {
-        layers
-            .tree(layer)
-            .get(glyph)
-            .and_then(|node| node.get().glyph_run())
-    })
+/// The run `owner` draws, as its layer holds it, with where it is. A
+/// section, a ring and a path are units of their own, but a label, a cap
+/// and a portal end's text and label are slots of their path's or their
+/// portal's unit, which `Projector::glyphs_of` answers for the unit
+/// alone, every slot of it — so the run is looked for among the slots of
+/// the owner and of its ancestors, and is the one the projector says
+/// draws the owner (`Projector::element_of`), never a sibling slot's.
+///
+/// Cost: O(the depth to the unit, at most three × its slots).
+fn owner_run<'l>(
+    doc: &Document,
+    projector: &Projector,
+    layers: &'l GlyphLayers,
+    owner: NodeId,
+) -> Option<(Layer, NodeId, &'l GlyphRunData)> {
+    std::iter::successors(Some(owner), |&at| doc.parent(at))
+        .take(4)
+        .find_map(|unit| {
+            projector.glyphs_of(unit).into_iter().find_map(|(layer, glyph)| {
+                if projector.element_of(layer, glyph) != Some(owner) {
+                    return None;
+                }
+                let run = layers.tree(layer).get(glyph)?.get().glyph_run()?;
+                Some((layer, glyph, run))
+            })
+        })
 }
 
 /// Where an owner that draws no glyph of its own text puts the caret:
@@ -378,13 +396,7 @@ pub(crate) fn range_glyphs(
     end: usize,
 ) -> Option<GlyphRange> {
     let graphemes = Graphemes::of(doc, owner);
-    let (layer, glyph) = projector.glyphs_of(owner).into_iter().find(|&(layer, glyph)| {
-        layers
-            .tree(layer)
-            .get(glyph)
-            .is_some_and(|node| node.get().glyph_run().is_some())
-    })?;
-    let run = layers.tree(layer).get(glyph)?.get().glyph_run()?;
+    let (layer, glyph, run) = owner_run(doc, projector, layers, owner)?;
     let inside = |source: Option<usize>| source.is_some_and(|g| start <= g && g < end);
     let mut first = None;
     let mut last = None;
