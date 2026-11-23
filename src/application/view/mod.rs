@@ -463,8 +463,9 @@ impl MapView {
 
     /// Follow the open text editor: what it edits and where its caret and
     /// its anchor are, or `None` once it closes. While it is open the
-    /// selection tint stands down on what it edits, its selected range is
-    /// tinted, and its caret is drawn; each takes effect at the next
+    /// selection tint stands down on what it edits, a path it edits text
+    /// on shows no handles, its selected range is tinted, and its caret is
+    /// drawn; each takes effect at the next
     /// [`Self::sync`], which works out whether anything changed. O(1).
     pub(crate) fn follow_editor(&mut self, focus: Option<EditorFocus>) {
         self.editing = focus;
@@ -523,7 +524,16 @@ impl MapView {
         doc: &MindMapDocument,
         changes: Option<&LayerChanges>,
     ) -> Vec<(GfxMutatorTree, Anchors)> {
-        let targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
+        let mut targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
+        // While an editor edits text on a path — its label, its content, a
+        // cap — that path's handles stand down, so none is drawn over what
+        // is typed or grabs a press meant for it; they return when the
+        // editor closes (ruling on #249, as the tint stands down on the
+        // picker's targets, #248).
+        let path = &mut targets[handles::HandleSet::Path.index()];
+        if path.is_some() && *path == self.editing.map(|focus| focus.host) {
+            *path = None;
+        }
         let follow = match changes {
             Some(_) => handles::HandleSet::ALL.map(|set| {
                 targets[set.index()].is_some_and(|target| {

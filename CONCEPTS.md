@@ -2364,7 +2364,14 @@ geometry, not on the runs a target owns, which a node with no frame
 does not write when it grows), so a pan writes none. Each set sits in
 its own group on its own channel range, so updating two sets in place
 never lets one's keys reach the other's runs. A press asks the handles
-before the projector (`MapView::handle_at`).
+before the projector (`MapView::handle_at`). A press on a handle starts
+no double-click (#218), but a double-click resolves against its first
+press's hit: a handle the first click brought up — a selected path's
+midpoint over its label — does not capture the second press. While a
+text editor edits text on a path — its label, its content, a cap — that
+path's handles stand down, none drawn over what is typed and none to
+grab, and return when the editor closes (ruling on #249, as the
+selection tint stands down on the picker's targets).
 
 ### Editor chrome
 
@@ -2983,7 +2990,7 @@ each change stages the spans whole (`compose::replace_spans`); the
 commit is one history entry, a commit that changed nothing is a cancel
 (a `CreateOrphanNodeAndEdit` session keeps the node it made), and an
 undo while it is open cancels it (R36). A double-click edits the exact
-element it hit, and `LabelEditOnSelection` or `path label edit` on a
+element its first press hit, and `LabelEditOnSelection` or `path label edit` on a
 path with no label inserts one, which a cancel or an empty commit takes
 away again (ruling K3 on #249); an empty commit on a label that was
 there removes it. A portal link's labels are its ends': asked of the

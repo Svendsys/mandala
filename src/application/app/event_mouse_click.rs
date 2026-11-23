@@ -210,10 +210,26 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         ),
         _ => None,
     };
-    // A press on a handle takes no part in a double-click (#218): it
-    // neither completes one nor starts one, so a second press on a
-    // handle grabs it again rather than open an editor under it.
-    if grab.is_some_and(super::live::grab::Grab::is_handle) {
+    let now = ctx.clock.now_ms();
+    // A double-click on what an open editor edits does not open it again:
+    // the editor is already there, and its transaction would refuse a
+    // second (as `main` guarded the re-open).
+    let editing_here = text::editing_under(ctx, landed.as_ref());
+    // A double-click resolves against its first press's hit (ruling on
+    // #249): a first press on a handle that was shown leaves no
+    // `last_click`, so the second press grabs the handle again (#218);
+    // a handle the first click brought up — a selected path's midpoint
+    // over its label — does not capture the second press, which completes
+    // the double-click on what the first press hit.
+    let doubled = !editing_here
+        && ctx
+            .last_click
+            .as_ref()
+            .is_some_and(|prev| is_double_click(prev, now, screen_pos, &hit));
+    // A press on a handle takes no other part in a double-click (#218): it
+    // starts none, so a second press on a shown handle grabs it again
+    // rather than open an editor under it.
+    if !doubled && grab.is_some_and(super::live::grab::Grab::is_handle) {
         *ctx.last_click = None;
         *ctx.drag_state = DragState::Pending {
             start_pos: screen_pos,
@@ -223,16 +239,6 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         };
         return;
     }
-    let now = ctx.clock.now_ms();
-    // A double-click on what an open editor edits does not open it again:
-    // the editor is already there, and its transaction would refuse a
-    // second (as `main` guarded the re-open).
-    let editing_here = text::editing_under(ctx, landed.as_ref());
-    let doubled = !editing_here
-        && ctx
-            .last_click
-            .as_ref()
-            .is_some_and(|prev| is_double_click(prev, now, screen_pos, &hit));
     if doubled {
         *ctx.last_click = None;
         *ctx.drag_state = DragState::None;

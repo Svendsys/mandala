@@ -250,32 +250,44 @@ fn test_an_undo_while_editing_closes_the_editor_with_nothing_written() {
     assert_eq!(bytes(init), baseline);
 }
 
-/// **The single-line editor on a connector's label**: a double-click on
-/// the label edits it (ruling K3: the element hit); typed characters
-/// draw and make no entry; Enter commits one, one `replace_spans`; undo
-/// restores. Escape cancels a second session byte-identically.
+/// The handle a press at `at` grabs, at the press tolerance the live
+/// view uses.
+fn handle_under(init: &InitState, at: Vec2) -> Option<crate::application::view::handles::Handle> {
+    let tolerance = super::handle_tolerance(&init.renderer);
+    init.view.as_ref().expect("a view").handle_at(at, tolerance)
+}
+
+/// Whether any handle is shown anywhere: the nearest at any distance.
+fn any_handle(init: &InitState) -> bool {
+    init.view
+        .as_ref()
+        .expect("a view")
+        .handle_at(Vec2::ZERO, f32::INFINITY)
+        .is_some()
+}
+
+/// **The single-line editor on a connector's label, by a double-click at
+/// its center** (ruling K3: the element hit; ruling on #249: a double-click
+/// resolves against its first press's hit). The first click selects the
+/// connector and brings up its midpoint handle under the label's center;
+/// the second press, on that handle, completes the double-click on the
+/// label all the same, which edits it. Typed characters draw and make no
+/// entry; Enter commits one, one `replace_spans`; undo restores. With the
+/// connector already selected, its handle shown before the first press, a
+/// double-click there grabs the handle and opens nothing (#218). Escape
+/// cancels a session byte-identically.
+///
+/// Controls, seen red: the handle check ahead of the double-click (the
+/// code this replaced) — the second press grabs the midpoint handle and
+/// no editor opens; and a press on a shown handle that starts a
+/// double-click — the editor opens under the handle (#218).
 #[test]
-fn test_the_label_editor_types_and_commits_through_input() {
+fn test_a_double_click_at_a_labels_center_edits_it_through_input() {
     let Some(mut app) = headless_app(&fixture()) else { return };
     let init = &mut app.init;
     let baseline = bytes(init);
     let connector = child(init, node(init, 2), DocKind::Connector, 0);
     let label = child(init, connector, DocKind::Label, 0);
-    // On its first letter, away from its center: the first click selects
-    // the connector, whose midpoint handle then sits under a label at
-    // `t = 0.5`, and a press on a handle takes no part in a double-click
-    // (#218).
-    let at = {
-        let run = init
-            .view
-            .as_ref()
-            .unwrap()
-            .projector()
-            .laid_label(connector)
-            .expect("the label is drawn");
-        let (top_left, size) = run.bounds();
-        top_left + Vec2::new(size.x * 0.1, size.y * 0.5)
-    };
     let center = init
         .view
         .as_ref()
@@ -284,16 +296,24 @@ fn test_the_label_editor_types_and_commits_through_input() {
         .label_pos(label)
         .expect("the label is drawn");
     assert!(
-        at.distance(center) > 8.0,
-        "precondition: the press is clear of the midpoint handle's reach"
+        handle_under(init, center).is_none(),
+        "precondition: no handle before the first click"
     );
 
-    double_click(init, at);
+    click(init, center);
+    assert!(
+        matches!(
+            handle_under(init, center),
+            Some(crate::application::view::handles::Handle::Path { path, .. }) if path == connector
+        ),
+        "precondition: the first click brought up the connector's handle under the label's center"
+    );
+    click(init, center);
     assert!(
         init.single_line_edit
             .session()
             .is_some_and(|s| s.owner() == label),
-        "a double-click on the label edits the label"
+        "a double-click at the label's center edits the label"
     );
     type_text(init, "ren");
     assert_eq!(entries(init), 0);
@@ -304,11 +324,73 @@ fn test_the_label_editor_types_and_commits_through_input() {
     act(init, json!("Undo"));
     assert_eq!(bytes(init), baseline);
 
-    double_click(init, at);
+    assert!(
+        handle_under(init, center).is_some(),
+        "precondition: the connector is selected, its handle shown before the press"
+    );
+    double_click(init, center);
+    assert!(
+        !init.single_line_edit.is_open(),
+        "a double-click on a handle shown before it grabs the handle (#218)"
+    );
+
+    click(init, EMPTY);
+    double_click(init, center);
+    assert!(
+        init.single_line_edit.is_open(),
+        "from nothing selected it edits again"
+    );
     type_text(init, "zzz");
     tap(init, "Escape");
     assert_eq!(bytes(init), baseline, "Escape cancels, byte-identical");
     assert_eq!(entries(init), 0);
+}
+
+/// **A path's handles stand down while text on it is edited** (ruling on
+/// #249, as the tint stands down on the picker's targets, #248): with the
+/// connector selected its handles are shown; while the single-line editor
+/// edits its label (`LabelEditOnSelection`) none is shown — none drawn
+/// over what is typed, none to grab — and they return on commit; while it
+/// edits the connector's content (`path edit`) the same, and they return
+/// on cancel.
+///
+/// Control, seen red: the handle targets taken from the selection alone
+/// (the code this replaced) — the handles stay shown while the label is
+/// edited.
+#[test]
+fn test_a_paths_handles_stand_down_while_its_text_is_edited() {
+    let Some(mut app) = headless_app(&fixture()) else { return };
+    let init = &mut app.init;
+    let connector = child(init, node(init, 2), DocKind::Connector, 0);
+    let label = child(init, connector, DocKind::Label, 0);
+    init.document.as_mut().unwrap().selection.select_only(connector);
+    frame(init);
+    assert!(
+        any_handle(init),
+        "precondition: the selected connector's handles are shown"
+    );
+
+    assert_eq!(act(init, json!("LabelEditOnSelection")), "handled");
+    assert!(init
+        .single_line_edit
+        .session()
+        .is_some_and(|s| s.owner() == label));
+    assert!(!any_handle(init), "no handle while its label is edited");
+    type_text(init, "s");
+    assert!(!any_handle(init), "nor after typing");
+    tap(init, "Enter");
+    assert!(any_handle(init), "the handles return on commit");
+
+    let reply = ipc(init, json!({"id": 1, "cmd": "act.console", "line": "path edit"}));
+    frame(init);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(init
+        .single_line_edit
+        .session()
+        .is_some_and(|s| s.owner() == connector));
+    assert!(!any_handle(init), "no handle while its content is edited");
+    tap(init, "Escape");
+    assert!(any_handle(init), "the handles return on cancel");
 }
 
 /// **A ring's poem through the console** (`frame ring 0 edit`): the
