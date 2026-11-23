@@ -19,13 +19,13 @@ use crate::document::resolve::{
     carry_binding, resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end,
     resolve_ring_in, resolve_text_in, Binding, Content, Input as DocInput, ReadRecorder, ResolvedText,
 };
-use crate::document::values::{Align, FitMode, FontSize};
+use crate::document::values::{Align, Anchor, FitMode, FontSize};
 use crate::engine::tree::Tree;
 use crate::flow::inked as inked_run;
 use crate::flow::{
     chain_point, offset as offset_outline, offset_keeping_corners, outline, pattern_gap, place_at_point,
-    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedGlyph,
-    PlacedRun, Rect, RingLayout, ShapedRun,
+    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, Curve, FlowSpan, PathEnd,
+    PlacedGlyph, PlacedRun, Rect, RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -422,7 +422,27 @@ impl Projector {
             }
         }
         work.phase = FANS;
-        for key in std::mem::take(&mut work.fans) {
+        // The sides first: the portal ends at a node keep clear of the
+        // paths leaving it as their sides were just fanned (#394), so a
+        // node a side was fanned at, and the far node of each path a fan
+        // changed, holds its portal ends again, after.
+        let (sides, mut held): (Vec<JunctionKey>, FxHashSet<JunctionKey>) = {
+            let (sides, held) = std::mem::take(&mut work.fans)
+                .into_iter()
+                .partition(|k| k.1.is_some());
+            (sides, held.into_iter().collect())
+        };
+        for key in sides {
+            // A path whose fan changed changes its curve at its other end
+            // too, where that node's portal ends keep clear of it.
+            let far = self.refan(key, work);
+            for node in std::iter::once(key.0).chain(far) {
+                if self.junctions.contains_key(&(node, None)) {
+                    held.insert((node, None));
+                }
+            }
+        }
+        for key in held {
             self.refan(key, work);
         }
         work.phase = LAY;
@@ -1441,9 +1461,14 @@ impl Projector {
     /// direction), given their turns and holds ([`geometry::fan`]), and
     /// untangled along their whole length ([`geometry::untangle`]); the
     /// portal ends with no `border_t` at a node, ordered round its
-    /// outline, are held apart there ([`geometry::held_apart`]). Each
-    /// member whose value changed is queued to be laid again, and no
-    /// other: a drag that keeps the order lays the dragged path alone.
+    /// outline, are held apart there and clear of the paths leaving it
+    /// ([`geometry::held_clear`], #394) — read as their sides were last
+    /// fanned, which phase C fans first. Each member whose value changed
+    /// is queued to be laid again, and no other: a drag that keeps the
+    /// order lays the dragged path alone.
+    /// Returns the nodes at the other ends of the paths a side's fan
+    /// changed, whose curves there changed with it: what phase C holds
+    /// the portal ends of again.
     ///
     /// Cost: a side is fanned and untangled whole on every update that
     /// marks it — every frame of a drag of one of its paths' far ends
@@ -1458,15 +1483,20 @@ impl Projector {
     /// come are certain, from the samples no halving moves, to be as many
     /// as the fewest so far; members that meet only along curves a halving
     /// moves may take every round, while they stay too near (#346). Portal
-    /// ends: O(the members, log them).
+    /// ends: O(the members, log them) with no path leaving the node;
+    /// with one, an arc-length walk of its outline, a nearest-point
+    /// search of it for each sample of each path's curves near it
+    /// (`geometry::portal_walls`), and `held_clear`'s
+    /// O((the members + the free stretches) × the free stretches) at
+    /// worst.
     ///
     /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
-    fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) {
+    fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) -> Vec<NodeId> {
         let Some(members) = self.junctions.get(&key) else {
-            return;
+            return Vec::new();
         };
         let at = |p: &NodeId| self.units.get(p).map(|u| &u.body);
-        let mut changed: Vec<NodeId> = Vec::new();
+        let (mut changed, mut far): (Vec<NodeId>, Vec<NodeId>) = (Vec::new(), Vec::new());
         match key.1 {
             Some(side) => {
                 // Each path's end here and its other end.
@@ -1530,26 +1560,40 @@ impl Projector {
                         if line.fans[m.1] != value {
                             line.fans[m.1] = value;
                             changed.push(m.0);
+                            far.push(m.3.node);
                         }
                     }
                 }
             }
             None => {
-                // (along, path, end, width, perimeter)
-                let mut ends: Vec<(f32, NodeId, usize, f32, f32)> = members
+                // (along, path, end, width, perimeter, depth)
+                let mut ends: Vec<(f32, NodeId, usize, f32, f32, f32)> = members
                     .iter()
                     .filter_map(|p| match at(p) {
                         Some(UnitBody::Portal(portal)) => portal.at.iter().enumerate().find_map(|(k, a)| {
                             a.filter(|a| a.node == key.0)
-                                .map(|a| (a.along, *p, k, a.width, a.perimeter))
+                                .map(|a| (a.along, *p, k, a.width, a.perimeter, a.depth))
                         }),
                         _ => None,
                     })
                     .collect();
                 ends.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
                 let perimeter = ends.first().map_or(0.0, |e| e.4);
-                let held =
-                    geometry::held_apart(&ends.iter().map(|e| (e.0, e.3)).collect::<Vec<_>>(), perimeter);
+                // The paths leaving the node, walled off as far out as its
+                // deepest end reaches (#394).
+                let leaving = self.leaving(key.0);
+                let walls = match self.nodes.get(&key.0) {
+                    Some(n) if !leaving.is_empty() => {
+                        let depth = ends.iter().map(|e| e.5).fold(0.0_f32, f32::max);
+                        geometry::portal_walls(&n.outline, &leaving, depth)
+                    }
+                    _ => Vec::new(),
+                };
+                let held = geometry::held_clear(
+                    &ends.iter().map(|e| (e.0, e.3)).collect::<Vec<_>>(),
+                    &walls,
+                    perimeter,
+                );
                 for (e, along) in ends.iter().zip(held) {
                     if let Some(UnitBody::Portal(portal)) = self.units.get_mut(&e.1).map(|u| &mut u.body) {
                         if portal.held[e.2] != along {
@@ -1563,6 +1607,50 @@ impl Projector {
         for id in changed {
             self.queue(work, Dependent::new(id, Stage::Place));
         }
+        far
+    }
+
+    /// The paths that leave `node`, from any of its sides (#394), each
+    /// once: its curves as its lay draws them — from its ends' attaches,
+    /// turned by their fans, through its control points (`line_place`),
+    /// as its geometry stage and the last fan of its two junctions left
+    /// them, which phase C has fanned before it holds portal ends — and
+    /// how far its body's and its caps' ink reach either side of them:
+    /// half its own gap and the larger glyph's diagonal, what
+    /// [`Attach::clear`] keeps first glyphs apart by. What the portal ends
+    /// there keep clear of. O(the paths there, and their control points).
+    fn leaving(&self, node: NodeId) -> Vec<geometry::Leaving> {
+        let mut seen: FxHashSet<NodeId> = FxHashSet::default();
+        let mut leaving = Vec::new();
+        for side in [Anchor::Top, Anchor::Right, Anchor::Bottom, Anchor::Left] {
+            let Some(members) = self.junctions.get(&(node, Some(side))) else {
+                continue;
+            };
+            for &p in members {
+                // A path with both ends here, on two sides, once.
+                if !seen.insert(p) {
+                    continue;
+                }
+                let Some(UnitBody::Line(line)) = self.units.get(&p).map(|u| &u.body) else {
+                    continue;
+                };
+                let [Some(start), Some(end)] = line.attach else {
+                    continue;
+                };
+                let (gap, size) = gap_and_size(line);
+                let caps = [1, 2].map(|k| {
+                    line.flows[k]
+                        .flow
+                        .as_ref()
+                        .map_or(0.0, |f| geometry::marker_size(&f.shaped).length())
+                });
+                leaving.push(geometry::Leaving {
+                    curves: line_curves(&start, &end, line.fans, &line.via, line.straight),
+                    radius: 0.5 * (gap + (size * std::f32::consts::SQRT_2).max(caps[0]).max(caps[1])),
+                });
+            }
+        }
+        leaving
     }
 
     /// Phase C, a connector's or line link's lay: its curves from end to
@@ -1590,17 +1678,7 @@ impl Projector {
         };
         let mut reads = vec![ProjectionInput::Opacity(owner)];
         let fans = line.fans;
-        let turned = |a: &Attach, k: usize| Vec2::from_angle(fans[k].turn).rotate(a.normal);
-        let curves = if path.straight {
-            vec![crate::flow::Curve::Line(start.point, end.point)]
-        } else {
-            geometry::path_through(
-                (start.point, turned(&start, 0), start.lead + fans[0].hold),
-                (end.point, turned(&end, 1), end.lead + fans[1].hold),
-                &path.control_points,
-                fans[0].handles.min(fans[1].handles),
-            )
-        };
+        let curves = line_curves(&start, &end, fans, &path.control_points, path.straight);
         let label_at = line
             .label
             .id
@@ -1712,15 +1790,15 @@ impl Projector {
             let Some(end_id) = end.marker.id else {
                 continue;
             };
-            let border = resolve_portal_end(
+            let resolved = resolve_portal_end(
                 tree,
                 end_id,
                 &mut Filtered {
                     reads: &mut reads,
                     drop: |i| matches!(i, DocInput::Style(_) | DocInput::Row(_)),
                 },
-            )
-            .border_t;
+            );
+            let border = resolved.border_t;
             if border != BorderPoint::Auto {
                 continue;
             }
@@ -1731,12 +1809,26 @@ impl Projector {
                 )
             });
             let label = end.label.flow.as_ref().map_or(Vec2::ZERO, |f| f.shaped.size);
+            // How far out `portal_place` draws its marker and its label at
+            // most: each box one reach past the one before it, and a reach
+            // along any normal no more than half the box's diagonal.
+            let usable = |v: f32| if v.is_finite() { v } else { 0.0 };
+            let marker_far = usable(resolved.offset) + marker.length();
+            let label_far = match (end.label.id, end.label.flow.as_ref()) {
+                (Some(id), Some(_)) => {
+                    marker_far
+                        + usable(resolve_label(tree, id, &mut Reads(&mut reads)).offset)
+                        + label.length()
+                }
+                _ => marker_far,
+            };
             let (along, perimeter) = geometry::portal_along(&outline, border, toward);
             at[k] = Some(PortalAt {
                 node,
                 along,
                 perimeter,
                 width: marker.max(label).max_element(),
+                depth: marker_far.max(label_far).max(0.0),
             });
         }
         self.deps.record(Dependent::new(id, Stage::Geometry), &reads);
@@ -1861,6 +1953,32 @@ impl Projector {
             portal.end[k].label.center = centers[k].1;
         }
     }
+}
+
+/// The curves a connector or a line link runs along, from `start` to
+/// `end` (#296): a straight one's one segment, or each end leaving its
+/// side turned by its fan in `fans`, held out by its lead and its fan's
+/// hold, through the control points `via`, keeping the smaller of its
+/// ends' shares of its handles. What `line_place` lays it along, and what
+/// the portal ends at its nodes keep clear of (#394). O(its control
+/// points).
+pub(crate) fn line_curves(
+    start: &Attach,
+    end: &Attach,
+    fans: [Fanned; 2],
+    via: &[Vec2],
+    straight: bool,
+) -> Vec<Curve> {
+    if straight {
+        return vec![Curve::Line(start.point, end.point)];
+    }
+    let turned = |a: &Attach, k: usize| Vec2::from_angle(fans[k].turn).rotate(a.normal);
+    geometry::path_through(
+        (start.point, turned(start, 0), start.lead + fans[0].hold),
+        (end.point, turned(end, 1), end.lead + fans[1].hold),
+        via,
+        fans[0].handles.min(fans[1].handles),
+    )
 }
 
 /// Whether a connector's or a line link's body of `input`, resolved as

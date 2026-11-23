@@ -1919,7 +1919,16 @@ the layers to learn what the document is, and nothing flows back.
   Each junction is fanned once an update, after every path's ends are
   found, and only the paths whose fan changed are laid again. Portal
   ends with no `border_t` that face one way at a node are held apart
-  along its outline (`geometry::held_apart`).
+  along its outline (`geometry::held_apart`), and clear of the paths
+  leaving the node (#394): wherever a path's ink comes within as far
+  out as the ends reach, it walls off the place along the outline
+  nearest it (`geometry::portal_walls`), and the ends take the nearest
+  free places, a crowded stretch passing ends on across a wall to the
+  nearest one with room (`geometry::held_clear`). A node's sides are
+  fanned before its portal ends are held, so the walls are the fans';
+  its ends are held again whenever a side there is fanned, or a fan at
+  a path's other end changes the path. Portal ends never move a path,
+  so a drag that sets an end's `border_t` moves no connector.
 - **Nodes hide the paths behind them** (#332, `projection/behind.rs`). A
   node's contents take priority over every path that does not end at
   it. Once every path is laid (`Stage::Hide`, its own phase), a glyph of

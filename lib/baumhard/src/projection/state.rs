@@ -376,7 +376,8 @@ pub(crate) struct PortalState {
 }
 
 /// Where a portal end with no `border_t` faces along its node's outline,
-/// and how wide its marker and label are (#296).
+/// how wide its marker and label are (#296), and how far out they reach
+/// (#394).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PortalAt {
     /// The node.
@@ -388,6 +389,10 @@ pub(crate) struct PortalAt {
     pub(crate) perimeter: f32,
     /// The larger side of its marker's box and its label's.
     pub(crate) width: f32,
+    /// How far past the outline, along its normal, its marker and label
+    /// reach at most, at any place along it: what the paths leaving the
+    /// node are walled off by, as far out as that (`geometry::portal_walls`).
+    pub(crate) depth: f32,
 }
 
 /// What a unit is, and what it keeps.

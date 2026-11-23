@@ -158,7 +158,19 @@ node's center leaves the outline, so it faces the other end. The ends
 with `border_t` unset at one node are held apart along the outline, no
 two nearer, center to center, than half the larger sides of their
 markers' and labels' boxes summed; a run of them that had to move is
-centered where they face. It is moved
+centered where they face. They also keep clear of the connectors and
+line links that leave the node: wherever such a path's ink comes
+between the outline and as far out as the ends there reach, it walls
+off the place along the outline nearest it. An end facing into a wall
+goes to the nearer of the wall's edges (clockwise on a tie), half its
+own width past it. A free stretch between two walls too short for the
+ends facing into it passes its ends on, one at a time, across a wall to
+the nearest stretch with room for them — a greedy rule, not the least
+moves overall. When no stretch has room for an end whole, it goes
+where it overflows least, if that is less than it overflows where it
+is, and ends left overflowing are packed tight and centered on their
+stretch, overlapping its walls alike. An end with `border_t` set is
+never moved: it may sit on a path. It is moved
 `offset` along the outline's outward normal there, and its marker is set
 just outside that point. Its label sits beside the marker, further out
 along the same normal by the label's `offset`; a portal end's label has
