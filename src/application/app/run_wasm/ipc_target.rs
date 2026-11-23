@@ -82,10 +82,11 @@ impl<'t, 'a> IpcCommandTarget<'t, 'a> {
         let (surface, canvas) = self.resolve(point);
         let input = &mut *self.app.input;
         input.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
-        let click_hit =
-            crate::application::app::compute_click_hit(Some(&input.document), input.view.as_mut(), canvas);
+        let (landed, click_hit) =
+            crate::application::app::press_hit(Some(&input.document), input.view.as_mut(), canvas);
         DispatchHit {
             click_hit,
+            element: landed.map(|landed| landed.element),
             canvas_pos: canvas,
         }
     }
@@ -99,6 +100,7 @@ impl<'t, 'a> IpcCommandTarget<'t, 'a> {
         WasmMacroDispatchTarget {
             input: self.app.input,
             renderer: self.app.renderer,
+            keybinds: self.app.keybinds,
             after_step: Some(after_step),
         }
     }
@@ -139,7 +141,10 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
         let real_cursor = self.app.input.cursor_pos;
         let hit = pointer.map(|point| self.place_pointer(point));
         let outcome = {
-            let mut core = self.app.input.input_context_core(self.app.renderer);
+            let mut core = self
+                .app
+                .input
+                .input_context_core(self.app.renderer, self.app.keybinds);
             dispatch::action_core::dispatch_compatible(&action, &mut core, hit.as_ref())
         };
         self.app.input.cursor_pos = real_cursor;

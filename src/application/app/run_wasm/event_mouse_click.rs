@@ -113,7 +113,7 @@ impl super::Borrowed<'_> {
                     canvas_pos,
                 };
                 let outcome = {
-                    let mut core = input.input_context_core(renderer);
+                    let mut core = input.input_context_core(renderer, self.keybinds);
                     dispatch::action_core::dispatch_compatible(&a, &mut core, Some(&dispatch_hit))
                 };
                 if matches!(outcome, DispatchOutcome::Unhandled) {

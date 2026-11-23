@@ -574,6 +574,7 @@ impl DragState {
         };
         Some(dispatch::DispatchHit {
             click_hit: *hit,
+            element: None,
             canvas_pos: *start_canvas,
             held_by: Some(crate::application::platform::input::MouseButton::Right),
         })

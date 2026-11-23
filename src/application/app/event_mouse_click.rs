@@ -232,6 +232,7 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         if let Some(a) = gesture_action(MouseGesture::DoubleClick, ctx) {
             let dispatch_hit = super::dispatch::DispatchHit {
                 click_hit: hit,
+                element: landed.as_ref().map(|landed| landed.element),
                 canvas_pos,
                 held_by: Some(MouseButton::Left),
             };

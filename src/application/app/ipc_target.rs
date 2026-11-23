@@ -91,10 +91,11 @@ impl<'a> IpcCommandTarget<'a> {
     fn place_pointer(&mut self, point: Point) -> DispatchHit {
         let (surface, canvas) = self.resolve(point);
         self.init.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
-        let click_hit =
-            super::compute_click_hit(self.init.document.as_ref(), self.init.view.as_mut(), canvas);
+        let (landed, click_hit) =
+            super::press_hit(self.init.document.as_ref(), self.init.view.as_mut(), canvas);
         DispatchHit {
             click_hit,
+            element: landed.map(|landed| landed.element),
             canvas_pos: canvas,
             // A synthetic pointer holds no button.
             held_by: None,

@@ -93,6 +93,10 @@ pub(super) struct WasmInputState {
     /// High-level interaction mode. Cross-platform field; the browser
     /// initializes it to `Default`.
     pub interaction_mode: super::InteractionMode,
+    /// The section text editor (`app::text_edit`), the browser's peer of
+    /// native's `InitState.text_edit`: the one text editor the browser
+    /// has (CLAUDE.md "Single-line editor").
+    pub text_edit: super::text_edit::TextEditor,
     /// Macro registry. Mirrors native's `InputHandlerContext::macros`
     /// — the App and User tiers, loaded at startup. Consulted by the
     /// keyboard handler's Action → Macro → edit fall-through.
@@ -231,6 +235,7 @@ impl WasmInputState {
     pub(super) fn input_context_core<'s>(
         &'s mut self,
         renderer: &'s mut Renderer,
+        keybinds: &'s ResolvedKeybinds,
     ) -> super::input_context_core::InputContextCore<'s> {
         super::input_context_core::InputContextCore {
             document: Some(&mut self.document),
@@ -243,6 +248,8 @@ impl WasmInputState {
             interaction_mode: &mut self.interaction_mode,
             edits: &self.edits,
             clock: &self.clock,
+            text_edit: &mut self.text_edit,
+            keybinds,
         }
     }
 
@@ -266,6 +273,9 @@ impl WasmInputState {
 pub(super) struct WasmMacroDispatchTarget<'a> {
     pub(super) input: &'a mut WasmInputState,
     pub(super) renderer: &'a mut Renderer,
+    /// The resolved keybinds, which a step's dispatch reads as a
+    /// keystroke's does.
+    pub(super) keybinds: &'a ResolvedKeybinds,
     /// The observer the IPC `verbose` event level hangs between
     /// steps (`MacroDispatchTarget::step_finished`); `None` from the
     /// keyboard, which observes nothing.
@@ -282,7 +292,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // `dispatch::dispatch_action` delegates to as well. A macro
         // step carries no `DispatchHit`: it is a keystroke-level
         // instruction with no pointer event behind it.
-        let mut core = self.input.input_context_core(self.renderer);
+        let mut core = self.input.input_context_core(self.renderer, self.keybinds);
         super::dispatch::action_core::dispatch_compatible(&action, &mut core, None)
     }
 
@@ -628,10 +638,6 @@ pub(super) fn run(mut app: Application) {
         pd_cb.forget(); // leak — lives for the page lifetime
     }
 
-    // No keydown listener suppresses the browser's defaults: the one
-    // that did ran while the node text editor was open, and the editor
-    // returns with V1-C8 (#249).
-
     let renderer_window = Arc::clone(&app.window);
 
     // On WASM, check for ?map= query parameter to override the default
@@ -668,6 +674,29 @@ pub(super) fn run(mut app: Application) {
 
     let renderer_rc: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
     let input_rc: Rc<RefCell<Option<WasmInputState>>> = Rc::new(RefCell::new(None));
+
+    // preventDefault on keydown while the text editor is open, so Tab,
+    // Enter, Backspace and the arrows do not fire the browser's defaults
+    // (tab navigation, history back, page scroll), as on `main`. The
+    // listener reads the editor itself, so whatever opened or closed it —
+    // a key, a click, IPC — it is never out of step; a borrow held
+    // elsewhere (never, between DOM events) reads as closed.
+    {
+        let input = Rc::clone(&input_rc);
+        let pd_cb =
+            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+                let editing = input
+                    .try_borrow()
+                    .is_ok_and(|input| input.as_ref().is_some_and(|input| input.text_edit.is_open()));
+                if editing {
+                    evt.prevent_default();
+                }
+            });
+        canvas
+            .add_event_listener_with_callback("keydown", pd_cb.as_ref().unchecked_ref())
+            .ok();
+        pd_cb.forget(); // leak — lives for the page lifetime
+    }
 
     // Clone Rcs for the spawn_local init future
     let renderer_for_init = renderer_rc.clone();
@@ -756,6 +785,7 @@ pub(super) fn run(mut app: Application) {
             pointer_inside: true,
             modifiers: crate::application::platform::input::Modifiers::empty(),
             interaction_mode: super::InteractionMode::Default,
+            text_edit: Default::default(),
             macros,
             edits,
             presentations,

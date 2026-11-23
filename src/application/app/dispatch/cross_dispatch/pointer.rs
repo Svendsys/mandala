@@ -25,17 +25,15 @@ use super::click_selection;
 
 /// What a pointer press landed on, carried into a dispatch.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(
-    target_arch = "wasm32",
-    expect(
-        dead_code,
-        reason = "read by the Actions that act where the pointer is: FastResizeStart, which is native, and \
-                  DoubleClickActivate (V1-C8, #249)"
-    )
-)]
 pub struct DispatchHit {
     /// What the press hit (`compute_click_hit`).
     pub click_hit: ClickHit,
+    /// The element the press landed on itself — a section, a ring, a
+    /// label, a cap, a portal end, a path, or a node's body — where
+    /// `click_hit` holds what a click there selects: what
+    /// `DoubleClickActivate` edits (ruling K3 on #249). `None` over empty
+    /// canvas, and from a gesture that recorded no hit test.
+    pub element: Option<baumhard::arena::NodeId>,
     /// Where it landed, in canvas space.
     pub canvas_pos: Vec2,
     /// The mouse button holding the press down, when one does: the

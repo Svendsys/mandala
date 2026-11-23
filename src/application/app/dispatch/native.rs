@@ -5,8 +5,8 @@
 //! through here. The cross-platform stage (`action_core`, which asks
 //! the owner families first) runs before the native-only arms below:
 //! the transactions family (the resize mode, the fast resize and the
-//! color picker), the console, the pan the drag state machine holds,
-//! and the files.
+//! color picker), the text family's single-line half, the console, the
+//! pan the drag state machine holds, and the files.
 //! Adding a new behavior is variant + default + arm, in that order;
 //! never inline a body in a handler.
 
@@ -113,10 +113,13 @@ pub(in crate::application::app) fn dispatch_action(
         let (mut core, _) = ctx.split_borrow();
         super::action_core::dispatch_compatible(&action, &mut core, hit)
     };
-    if !matches!(cross_outcome, DispatchOutcome::Unhandled) || super::families::dispatch(&action).is_some() {
+    if !matches!(cross_outcome, DispatchOutcome::Unhandled) {
         return cross_outcome;
     }
     if let Some(outcome) = super::families::transactions::dispatch(&action, ctx, hit) {
+        return outcome;
+    }
+    if let Some(outcome) = super::families::text::dispatch_native(&action, ctx, hit) {
         return outcome;
     }
     dispatch_native_arms(action, ctx)

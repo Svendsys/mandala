@@ -4,8 +4,8 @@
 //! projected runs that mean nothing in the document — the selection
 //! tint, the rubber band's preview of what it covers, the reparent and
 //! connect sources ([`SOURCE_HIGHLIGHT`]) and target
-//! ([`TARGET_HIGHLIGHT`]), and in a later issue
-//! NodeEdit's dimming (V1-C8).
+//! ([`TARGET_HIGHLIGHT`]), NodeEdit's dim ([`Dim`]) and a text editor's
+//! selected range ([`RangeTint`]).
 //!
 //! **One mechanism.** An [`Overlay`] is a run override
 //! ([`RunOverrideOp`]) and the document elements it is stamped on. It is
@@ -91,6 +91,7 @@ pub(crate) struct Overlay {
 
 /// What one [`Overlay::plan`] decided to write: the runs to clear, then
 /// the runs to stamp, per layer.
+#[derive(Default)]
 pub(crate) struct Planned {
     /// The runs to clear, indexed by `Layer::index`.
     clear: [Vec<NodeId>; 5],
@@ -238,24 +239,7 @@ impl Overlay {
     /// `planned` names, each by a glyph mutator the walker applies, and
     /// return the journals.
     pub(crate) fn write(&self, planned: Planned, layers: &mut GlyphLayers) -> OverlayJournals {
-        let Planned { clear, stamp } = planned;
-        let mut out: [JournalBuilder<GfxElement>; 5] = std::array::from_fn(|_| JournalBuilder::new());
-        for layer in Layer::ALL {
-            let i = layer.index();
-            let tree = layers.tree_mut(layer);
-            write(tree, &mut out[i], &clear[i], RunOverrideOp::Clear);
-            write(tree, &mut out[i], &stamp[i], self.op.clone());
-        }
-        let [sections, frames, connections, labels, portals] = out;
-        OverlayJournals {
-            per_layer: [
-                sections.close(&layers.sections),
-                frames.close(&layers.frames),
-                connections.close(&layers.connections),
-                labels.close(&layers.labels),
-                portals.close(&layers.portals),
-            ],
-        }
+        write_planned(planned, self.op.clone(), layers)
     }
 }
 
@@ -326,5 +310,263 @@ pub(super) fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyp
             DocKind::Node | DocKind::Connector | DocKind::Link => return Some(at),
             _ => at = doc.parent(at)?,
         }
+    }
+}
+
+/// How much NodeEdit's dim keeps of a glyph's alpha: half, `main`'s
+/// `INACTIVE_NODE_ALPHA_MULTIPLIER`.
+pub(crate) const DIM_FADE: f32 = 0.5;
+
+/// **NodeEdit's dim** (design §12.5; V1-C8, ruling K2 on #249): every
+/// node but the one being edited drawn at [`DIM_FADE`] of its alpha —
+/// its sections' and its frame's runs, as `main` dimmed them — by a
+/// [`RunOverrideOp::Fade`] stamped as every overlay is stamped.
+///
+/// **Its targets are a rule, not a list**: a run is dimmed when its owner
+/// is a node other than the active one and other than every node another
+/// overlay is stamped on (`excluded`), so no two overlays ever stamp one
+/// run and one's `Clear` never takes another's stamp. A list of every
+/// other node would make each pass's membership test as long as the map;
+/// the rule is O(the depth to the run's owner, at most three) per run.
+///
+/// **Each move costs what it changes.** Entering NodeEdit stamps the
+/// sections' and frames' runs once — every node but one changes how it
+/// looks — and leaving it clears exactly what it stamped. In between, a
+/// projector rewrite re-stamps the runs it named, and a node that leaves
+/// or joins `excluded` has its own runs cleared or stamped; no other run
+/// is visited.
+#[derive(Default)]
+pub(crate) struct Dim {
+    /// The node being edited, while NodeEdit is active.
+    active: Option<NodeId>,
+    /// The nodes another overlay is stamped on, which the dim leaves.
+    excluded: Vec<NodeId>,
+    /// Every run stamped now, by layer and glyph element.
+    stamped: rustc_hash::FxHashSet<(Layer, NodeId)>,
+}
+
+impl Dim {
+    /// Whether the dim already stands as `active` and `excluded` want.
+    /// O(the excluded nodes).
+    pub(crate) fn is_current(&self, active: Option<NodeId>, excluded: &[NodeId]) -> bool {
+        self.active == active && (active.is_none() || self.excluded == excluded)
+    }
+
+    /// The runs stamped now. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn stamped_runs(&self) -> Vec<(Layer, NodeId)> {
+        self.stamped.iter().copied().collect()
+    }
+
+    /// Whether the run `glyph` of `layer` is one the dim stamps for
+    /// `active` and `excluded`: a section's or a ring's run whose node is
+    /// neither. O(the depth to its owner, at most three).
+    fn dims(
+        doc: &Document,
+        projector: &Projector,
+        layer: Layer,
+        glyph: NodeId,
+        active: NodeId,
+        excluded: &[NodeId],
+    ) -> bool {
+        matches!(layer, Layer::Sections | Layer::Frames)
+            && owner_of(doc, projector, layer, glyph)
+                .is_some_and(|node| node != active && !excluded.contains(&node))
+    }
+
+    /// Plan this pass's clears and stamps, in two halves — what it clears
+    /// and re-stamps, written with the other overlays' clears; what it
+    /// stamps anew, written with their stamps — and take `active` and
+    /// `excluded` as what it stands by from now on. Writes no run.
+    ///
+    /// Cost: entering or leaving NodeEdit, the runs of the sections and
+    /// frames layers once; otherwise the runs `changes` names and the
+    /// runs of the nodes that left or joined `excluded`.
+    pub(crate) fn plan(
+        &mut self,
+        active: Option<NodeId>,
+        excluded: &[NodeId],
+        changes: Option<&LayerChanges>,
+        doc: &Document,
+        projector: &Projector,
+        layers: &GlyphLayers,
+    ) -> (Planned, Planned) {
+        let mut first = Planned::default();
+        let mut second = Planned::default();
+        if let Some(changes) = changes {
+            for layer in Layer::ALL {
+                for (glyph, touch) in changes.journal(layer).touched() {
+                    if touch == Touch::Removed {
+                        self.stamped.remove(&(layer, glyph));
+                        continue;
+                    }
+                    let dimmed = self
+                        .active
+                        .is_some_and(|a| Self::dims(doc, projector, layer, glyph, a, &self.excluded));
+                    if dimmed {
+                        self.stamped.insert((layer, glyph));
+                        first.stamp[layer.index()].push(glyph);
+                    }
+                }
+            }
+        }
+        if self.active != active {
+            for &(layer, glyph) in &self.stamped {
+                first.clear[layer.index()].push(glyph);
+            }
+            self.stamped.clear();
+            if let Some(active) = active {
+                for layer in [Layer::Sections, Layer::Frames] {
+                    let tree = layers.tree(layer);
+                    for glyph in tree.descendants() {
+                        let is_run = tree.get(glyph).is_some_and(|n| n.get().glyph_run().is_some());
+                        if is_run && Self::dims(doc, projector, layer, glyph, active, excluded) {
+                            self.stamped.insert((layer, glyph));
+                            second.stamp[layer.index()].push(glyph);
+                        }
+                    }
+                }
+            }
+        } else if let Some(active) = active.filter(|_| self.excluded != excluded) {
+            // Nodes that joined `excluded` lose their dim; nodes that left
+            // it are dimmed again.
+            self.stamped.retain(|&(layer, glyph)| {
+                if Self::dims(doc, projector, layer, glyph, active, excluded) {
+                    return true;
+                }
+                first.clear[layer.index()].push(glyph);
+                false
+            });
+            for &node in &self.excluded {
+                if excluded.contains(&node) {
+                    continue;
+                }
+                for (layer, glyph) in runs_of(doc, projector, layers, node) {
+                    if Self::dims(doc, projector, layer, glyph, active, excluded)
+                        && self.stamped.insert((layer, glyph))
+                    {
+                        second.stamp[layer.index()].push(glyph);
+                    }
+                }
+            }
+        }
+        self.active = active;
+        self.excluded.clear();
+        self.excluded.extend_from_slice(excluded);
+        (first, second)
+    }
+
+    /// Write what [`Self::plan`] decided, as [`Overlay::write`] writes:
+    /// the clears, then a fade on every stamped run.
+    pub(crate) fn write(&self, planned: Planned, layers: &mut GlyphLayers) -> OverlayJournals {
+        write_planned(
+            planned,
+            RunOverrideOp::Fade {
+                range: 0..usize::MAX,
+                value: DIM_FADE,
+            },
+            layers,
+        )
+    }
+}
+
+/// A run of one layer and the glyphs of it an overlay covers.
+pub(crate) type GlyphRange = (Layer, NodeId, std::ops::Range<usize>);
+
+/// **The editor's selected range** (V1-C8): the glyphs of the edited
+/// owner's run that a shift-select covers, in the selection's cyan — a
+/// [`RunOverrideOp::Color`] over just that glyph range, stamped and
+/// re-stamped as every overlay is. The selection tint stands down on what
+/// an editor edits (`MapView::sync`), so this is the only overlay on that
+/// run while it is open.
+#[derive(Default)]
+pub(crate) struct RangeTint {
+    /// The run stamped now, and the glyphs it covers.
+    stamped: Option<GlyphRange>,
+}
+
+impl RangeTint {
+    /// Whether it already stamps `want`. O(1).
+    pub(crate) fn is_current(&self, want: Option<&GlyphRange>) -> bool {
+        self.stamped.as_ref() == want
+    }
+
+    /// The run and range stamped now. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn stamped(&self) -> Option<&GlyphRange> {
+        self.stamped.as_ref()
+    }
+
+    /// Plan this pass's clear and stamp: the run stamped now is cleared
+    /// when the range moved, and `want` is stamped when it moved or the
+    /// projector rewrote its run in `changes` (which wiped the stamp).
+    /// Returns the plan and the range to stamp. O(the runs `changes`
+    /// names).
+    pub(crate) fn plan(
+        &mut self,
+        want: Option<GlyphRange>,
+        changes: Option<&LayerChanges>,
+    ) -> (Planned, Option<std::ops::Range<usize>>) {
+        let mut planned = Planned::default();
+        let rewritten = |layer: Layer, glyph: NodeId| {
+            changes.is_some_and(|c| c.journal(layer).touched().any(|(id, _)| id == glyph))
+        };
+        let moved = self.stamped != want;
+        if let Some((layer, glyph, _)) = &self.stamped {
+            if moved && !rewritten(*layer, *glyph) {
+                planned.clear[layer.index()].push(*glyph);
+            }
+        }
+        let range = match &want {
+            Some((layer, glyph, range)) if moved || rewritten(*layer, *glyph) => {
+                planned.stamp[layer.index()].push(*glyph);
+                Some(range.clone())
+            }
+            _ => None,
+        };
+        self.stamped = want;
+        (planned, range)
+    }
+
+    /// Write what [`Self::plan`] decided: the clear, then the cyan over
+    /// `range`.
+    pub(crate) fn write(
+        &self,
+        planned: Planned,
+        range: Option<std::ops::Range<usize>>,
+        layers: &mut GlyphLayers,
+    ) -> OverlayJournals {
+        write_planned(
+            planned,
+            RunOverrideOp::Color {
+                range: range.unwrap_or(0..0),
+                value: Some(SELECTION_HIGHLIGHT),
+            },
+            layers,
+        )
+    }
+}
+
+/// Clear and stamp the runs `planned` names — every clear before any
+/// stamp, layer by layer — the stamps with `op`, each by a glyph mutator
+/// the walker applies; return the journals.
+fn write_planned(planned: Planned, op: RunOverrideOp, layers: &mut GlyphLayers) -> OverlayJournals {
+    let Planned { clear, stamp } = planned;
+    let mut out: [JournalBuilder<GfxElement>; 5] = std::array::from_fn(|_| JournalBuilder::new());
+    for layer in Layer::ALL {
+        let i = layer.index();
+        let tree = layers.tree_mut(layer);
+        write(tree, &mut out[i], &clear[i], RunOverrideOp::Clear);
+        write(tree, &mut out[i], &stamp[i], op.clone());
+    }
+    let [sections, frames, connections, labels, portals] = out;
+    OverlayJournals {
+        per_layer: [
+            sections.close(&layers.sections),
+            frames.close(&layers.frames),
+            connections.close(&layers.connections),
+            labels.close(&layers.labels),
+            portals.close(&layers.portals),
+        ],
     }
 }

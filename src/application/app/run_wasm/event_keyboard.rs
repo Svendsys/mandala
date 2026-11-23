@@ -45,7 +45,7 @@ impl super::Borrowed<'_> {
         // which native's `dispatch::dispatch_action` delegates to as well:
         // one source of truth for every Compatible arm across both targets.
         if let Some(a) = action {
-            let mut core = input.input_context_core(renderer);
+            let mut core = input.input_context_core(renderer, keybinds);
             let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
             return true;
         }
@@ -60,6 +60,7 @@ impl super::Borrowed<'_> {
             let mut target = WasmMacroDispatchTarget {
                 input,
                 renderer,
+                keybinds,
                 after_step: None,
             };
             if dispatch::macro_core::dispatch_macro(&id, &mut target) {

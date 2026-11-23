@@ -312,6 +312,7 @@ fn promote_left_drag(
     };
     let dispatch_hit = super::dispatch::DispatchHit {
         click_hit: hit,
+        element: None,
         canvas_pos: start_canvas,
         held_by: Some(MouseButton::Left),
     };

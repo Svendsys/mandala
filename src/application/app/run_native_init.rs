@@ -66,6 +66,10 @@ pub(super) struct InitState {
     pub(super) console_state: ConsoleState,
     pub(super) console_history: Vec<String>,
     pub(super) color_picker_state: crate::application::color_picker::ColorPickerState,
+    /// The section text editor (`app::text_edit`).
+    pub(super) text_edit: super::text_edit::TextEditor,
+    /// The single-line editor (`app::single_line_edit`).
+    pub(super) single_line_edit: super::single_line_edit::SingleLineEditor,
     pub(super) last_click: Option<LastClick>,
     pub(super) modifiers: ModifiersState,
     pub(super) cursor_is_hand: bool,
@@ -149,6 +153,8 @@ impl InitState {
             console_state: &mut self.console_state,
             console_history: &mut self.console_history,
             color_picker_state: &mut self.color_picker_state,
+            text_edit: &mut self.text_edit,
+            single_line_edit: &mut self.single_line_edit,
             last_click: &mut self.last_click,
             cursor_pos: &mut self.cursor_pos,
             modifiers: &mut self.modifiers,
@@ -401,6 +407,8 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         console_state,
         console_history,
         color_picker_state: crate::application::color_picker::ColorPickerState::Closed,
+        text_edit: Default::default(),
+        single_line_edit: Default::default(),
         last_click: None,
         modifiers: ModifiersState::empty(),
         // True while the cursor is over a node whose click runs a verb.
