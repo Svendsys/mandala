@@ -1572,6 +1572,420 @@ pub(crate) fn held_apart(ends: &[(f32, f32)], perimeter: f32) -> Vec<f32> {
     at
 }
 
+/// A path that leaves a node, as the portal ends there keep clear of it
+/// (#394): its curves as its lay draws them, and `radius`, how far its
+/// ink reaches either side of them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Leaving {
+    /// Its curves, end to end.
+    pub(crate) curves: Vec<Curve>,
+    /// How far its ink reaches either side of its curves.
+    pub(crate) radius: f32,
+}
+
+/// How many steps fast a piece of a curve may run before
+/// [`near_points`] halves it rather than sample it.
+const NEAR_SPLIT: f32 = 16.0;
+
+/// How many times [`near_points`] halves a curve at most: 64 halvings
+/// divide a piece's speed bound by 2⁶⁴, so a piece whose bound is within
+/// [`NEAR_SPLIT`]` · `[`WALL_STEP`]` · 2⁶⁴` = 2⁶⁸ — past three times
+/// [`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH), 2⁶³, the longest
+/// path a lay draws — is sampled a step apart wherever it comes near.
+/// Each level halves only the pieces whose boxes meet the band, so the
+/// levels cost little more than the band's samples.
+const NEAR_DEPTH: u32 = 64;
+
+/// The most points [`near_points`] takes of one path's curves, a bound on
+/// one path's cost to [`portal_walls`]: past it, what lies further along
+/// its curves is not walled. A path whose pieces near a node are sampled
+/// in fewer points — some `WALL_SAMPLE_CAP` steps of its length near it,
+/// less what its pieces' speed bounds overstate — is walled whole.
+pub(crate) const WALL_SAMPLE_CAP: usize = 1 << 12;
+
+/// The pieces of `curve` halved at its middle (de Casteljau), each
+/// midpoint taken as two halves summed, so that two points within the
+/// largest `f32` have one. O(1).
+fn halves(curve: Curve) -> (Curve, Curve) {
+    let mid = |a: Vec2, b: Vec2| 0.5 * a + 0.5 * b;
+    match curve {
+        Curve::Line(a, b) => {
+            let m = mid(a, b);
+            (Curve::Line(a, m), Curve::Line(m, b))
+        }
+        Curve::Quadratic(a, c, b) => {
+            let (ac, cb) = (mid(a, c), mid(c, b));
+            let m = mid(ac, cb);
+            (Curve::Quadratic(a, ac, m), Curve::Quadratic(m, cb, b))
+        }
+        Curve::Cubic(a, c1, c2, b) => {
+            let (p, q, r) = (mid(a, c1), mid(c1, c2), mid(c2, b));
+            let (pq, qr) = (mid(p, q), mid(q, r));
+            let m = mid(pq, qr);
+            (Curve::Cubic(a, p, pq, m), Curve::Cubic(m, qr, r, b))
+        }
+    }
+}
+
+/// Points of `curve` no further than `step` apart along it, wherever it
+/// may come within `near` — a box — onto `out`, until `out` holds
+/// [`WALL_SAMPLE_CAP`]: a piece whose control points' box misses `near`
+/// lies outside it (a Bézier lies in its control points' hull) and is
+/// passed over; one that runs more than [`NEAR_SPLIT`] steps fast, or
+/// has no finite speed bound (legs past the largest `f32`), is halved, at
+/// most [`NEAR_DEPTH`] times; any other is sampled evenly, as many points
+/// as its speed bound is steps, and its ends. A piece with a control
+/// point that is not finite is passed over, and so is one with no finite
+/// speed bound once the halvings are spent. O(its points, and the pieces
+/// halved).
+fn near_points(curve: Curve, near: Rect, step: f32, depth: u32, out: &mut Vec<Vec2>) {
+    let points: &[Vec2] = match &curve {
+        Curve::Line(a, b) => &[*a, *b],
+        Curve::Quadratic(a, c, b) => &[*a, *c, *b],
+        Curve::Cubic(a, c1, c2, b) => &[*a, *c1, *c2, *b],
+    };
+    if out.len() >= WALL_SAMPLE_CAP || points.iter().any(|p| !p.is_finite()) {
+        return;
+    }
+    let (low, high) = points.iter().fold(
+        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+        |(l, h), p| (l.min(*p), h.max(*p)),
+    );
+    let far = near.max();
+    if high.x < near.origin.x || high.y < near.origin.y || low.x > far.x || low.y > far.y {
+        return;
+    }
+    let speed = curve.speed_bound();
+    let fast = !speed.is_finite() || speed > NEAR_SPLIT * step;
+    if fast && depth > 0 {
+        let (a, b) = halves(curve);
+        near_points(a, near, step, depth - 1, out);
+        near_points(b, near, step, depth - 1, out);
+        return;
+    }
+    if !speed.is_finite() {
+        return;
+    }
+    let n = ((speed / step).ceil() as usize).clamp(1, WALL_SAMPLE_CAP);
+    for i in 0..=n {
+        if out.len() >= WALL_SAMPLE_CAP {
+            return;
+        }
+        out.push(curve.point(i as f32 / n as f32));
+    }
+}
+
+/// The walls the paths `leaving` a node stand on its `outline` for the
+/// portal ends there, whose markers and labels reach from `band.0` (zero,
+/// or less where an end is drawn inward) to `band.1` past the outline
+/// along its normal (#394). Each wall is `(along, width)` as
+/// [`portal_along`] measures an end: the places along the outline at
+/// which an end would meet a path's ink — in the measure [`held_apart`]
+/// holds ends apart by, a length along the outline. The band is the
+/// whole node's: an end that reaches less far keeps clear of ink it would
+/// not have reached.
+///
+/// Each path is sampled wherever it may come within its reach of the
+/// band ([`near_points`], a step its ink's radius apart, at least
+/// [`WALL_STEP`]); each sample in the band, by its distance past the
+/// outline at the place nearest it, walls off that place either way by
+/// the ink's radius and by `step / √2`. Outside the outline that walls
+/// the ink between two samples too: nearest-point projection onto the
+/// convex outline moves no point further than the point itself moved, so
+/// the curve between two samples, at most a step long, has nearest
+/// places at most a step apart along the outline — half of that each
+/// way, and more. Inside the outline it is not so bounded: the nearest
+/// place of a point inside jumps across the outline's middle, so two
+/// samples there a step apart may wall places far apart, each still
+/// walled, and the ink between them may not be. A path's ink lies inside
+/// its node only within its radius of where it leaves, or where its
+/// control points route it across.
+///
+/// Cost: one arc-length walk of the outline; for each path, its pieces
+/// near the band halved and sampled, at most [`WALL_SAMPLE_CAP`] points,
+/// and a nearest-point search of the outline for each.
+pub(crate) fn portal_walls(outline: &Outline, leaving: &[Leaving], band: (f32, f32)) -> Vec<(f32, f32)> {
+    if leaving.is_empty() {
+        return Vec::new();
+    }
+    let arc = portal_arc(outline);
+    let (inner, outer) = (
+        if band.0.is_finite() { band.0.min(0.0) } else { 0.0 },
+        if band.1.is_finite() { band.1.max(0.0) } else { 0.0 },
+    );
+    let rect = outline.rect();
+    let mut walls = Vec::new();
+    let mut points = Vec::new();
+    for path in leaving {
+        let radius = if path.radius.is_finite() {
+            path.radius.max(0.0)
+        } else {
+            0.0
+        };
+        let step = radius.max(WALL_STEP);
+        let pad = radius + step * std::f32::consts::FRAC_1_SQRT_2;
+        let reach = outer + pad;
+        let near = Rect::new(
+            rect.origin - Vec2::splat(reach),
+            rect.size + Vec2::splat(2.0 * reach),
+        );
+        points.clear();
+        for curve in &path.curves {
+            near_points(*curve, near, step, NEAR_DEPTH, &mut points);
+        }
+        for &q in &points {
+            let s = arc.nearest(q);
+            let at = arc.offset_at(s, 0.0);
+            let past = (q - at.point).dot(at.normal);
+            if (inner - pad..=reach).contains(&past) {
+                walls.push((s, 2.0 * pad));
+            }
+        }
+    }
+    walls
+}
+
+/// The least step [`portal_walls`] samples a path at: a path whose ink
+/// has no radius is still walled at this pitch.
+pub(crate) const WALL_STEP: f32 = 1.0;
+
+/// [`held_apart`], clear of `walls` (#394): where each of `ends` —
+/// `(along, width)` round a closed outline `perimeter` long — sits, no
+/// end nearer a wall's edge than half its own width where the outline
+/// has room for it, and no two ends nearer, center to center, than half
+/// their widths summed whenever those widths fit the perimeter; each wall
+/// `(along, width)` is the stretch of the outline a path leaving the node
+/// covers ([`portal_walls`]). An end may sit on a path, never on another
+/// end.
+///
+/// The walls, merged where they meet, cut the outline into free
+/// stretches. Each end goes to the stretch it faces into, or, facing
+/// into a wall, to the stretch past the nearer of that wall's edges —
+/// the later one, clockwise, on a tie. The stretches are then visited
+/// once each, clockwise from the one past the first wall from the top
+/// side's start. A stretch its ends' widths summed overflow sheds them
+/// one at a time, greedily, not as a least squares: its first end
+/// counterclockwise or its last clockwise, whichever reaches a stretch
+/// with room for it whole by the shorter move — the nearest stretch with
+/// room, either way, clockwise on a tie — past the walls, paths and ends
+/// between. Where neither way has a stretch with room, the end that goes
+/// is the one either way that overflows its stretch least — clockwise on
+/// a tie — if that overflows by less than taking it off its own stretch
+/// spares; and none goes otherwise, which ends the visit. A stretch's
+/// visit only ever takes ends off it, so each visit ends, and an end is
+/// shed at most once a stretch.
+///
+/// Within each stretch its ends are held apart as [`held_apart`] holds
+/// them on an open line, then moved in from its walls: the least squares
+/// of the moves, there, for ends kept in their order between two walls
+/// (an isotonic fit bounded alike at every end is the unbounded one,
+/// clamped). A stretch left overflowing has its ends packed tight,
+/// centered on it and over both its walls by as much — which may reach
+/// the ends past a wall. So whenever a stretch is left overflowing, the
+/// ends so placed are then held apart round the whole outline as
+/// [`held_apart`] holds ends facing those places: the walls yield, the
+/// ends do not overlap.
+///
+/// With no walls, or none that leave the outline any room, or a
+/// `perimeter` that is not a positive number, it is [`held_apart`]
+/// itself, the walls set aside. Cost: each shed walks the stretches
+/// round both ways, and an end is shed at most once a stretch, so
+/// O(ends × stretches²) at worst; O(ends log ends + walls log walls)
+/// when no stretch overflows; a few allocations.
+pub(crate) fn held_clear(ends: &[(f32, f32)], walls: &[(f32, f32)], perimeter: f32) -> Vec<f32> {
+    let closed = perimeter.is_finite() && perimeter > 0.0;
+    let mut arcs: Vec<(f32, f32)> = walls
+        .iter()
+        .filter(|w| w.0.is_finite() && w.1.is_finite() && w.1 > 0.0)
+        .map(|&(center, width)| {
+            let start = (center - 0.5 * width).rem_euclid(perimeter);
+            (start, start + width)
+        })
+        .collect();
+    if !closed || arcs.is_empty() || ends.is_empty() {
+        return held_apart(ends, perimeter);
+    }
+    // The walls merged where they meet, round the seam too: each a
+    // stretch of the outline from its start, in `0..perimeter`, on.
+    arcs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f32, f32)> = Vec::with_capacity(arcs.len());
+    for arc in arcs {
+        match merged.last_mut() {
+            Some(last) if arc.0 <= last.1 => last.1 = last.1.max(arc.1),
+            _ => merged.push(arc),
+        }
+    }
+    while merged.len() > 1 {
+        let (first, last) = (merged[0], merged[merged.len() - 1]);
+        if last.1 < first.0 + perimeter {
+            break;
+        }
+        let at = merged.len() - 1;
+        merged[at].1 = last.1.max(first.1 + perimeter);
+        merged.remove(0);
+    }
+    let m = merged.len();
+    if merged[0].1 - merged[0].0 >= perimeter {
+        return held_apart(ends, perimeter);
+    }
+    // Stretch `j` runs from wall `j`'s end to wall `j + 1`'s start, round
+    // the seam for the last; `step[j]` is from its start to the next's.
+    let wall = |j: usize| merged[j % m].1 - merged[j % m].0;
+    let lo: Vec<f32> = merged.iter().map(|w| w.1).collect();
+    let len: Vec<f32> = (0..m)
+        .map(|j| {
+            let next = if j + 1 == m {
+                merged[0].0 + perimeter
+            } else {
+                merged[j + 1].0
+            };
+            next - lo[j]
+        })
+        .collect();
+    let step: Vec<f32> = (0..m).map(|j| len[j] + wall(j + 1)).collect();
+    // Each stretch's ends, in order: (place from its start, end); and
+    // their widths summed.
+    type Stretch = (std::collections::VecDeque<(f32, usize)>, f32);
+    let mut held: Vec<Stretch> = vec![(Default::default(), 0.0); m];
+    for (k, &(along, width)) in ends.iter().enumerate() {
+        let along = if along.is_finite() {
+            along.rem_euclid(perimeter)
+        } else {
+            0.0
+        };
+        let after = merged.partition_point(|w| w.0 <= along);
+        let (i, along) = if after == 0 {
+            (m - 1, along + perimeter)
+        } else {
+            (after - 1, along)
+        };
+        let (j, place) = if along < merged[i].1 {
+            let (ccw, cw) = (along - merged[i].0, merged[i].1 - along);
+            if ccw < cw {
+                let j = (i + m - 1) % m;
+                (j, len[j] + ccw)
+            } else {
+                (i, -cw)
+            }
+        } else {
+            (i, along - merged[i].1)
+        };
+        held[j].0.push_back((place, k));
+        held[j].1 += width;
+    }
+    let width = |k: usize| ends[k].1;
+    for h in &mut held {
+        h.0.make_contiguous()
+            .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    }
+    // How far the ends a stretch holds overflow it, their widths summed.
+    let over = |sum: f32, len: f32| (sum - len).max(0.0);
+    for j in 0..m {
+        // Each round takes an end off stretch `j`, or ends its visit.
+        while let (Some(&front), Some(&back)) = (held[j].0.front(), held[j].0.back()) {
+            if held[j].1 <= len[j] {
+                break;
+            }
+            // One way round: its outermost end, and the first stretch on
+            // with room for it whole — how far the end moves to reach
+            // its near edge, the stretch, and the end's place from that
+            // stretch's start — or else the stretch it overflows least,
+            // the first of those: by how much, the stretch, the place.
+            let walk = |cw: bool| {
+                let (mut place, k) = if cw { back } else { front };
+                let w = width(k);
+                let (mut to, mut least) = (j, None::<(f32, usize, f32)>);
+                loop {
+                    if cw {
+                        place -= step[to];
+                        to = (to + 1) % m;
+                    } else {
+                        to = (to + m - 1) % m;
+                        place += step[to];
+                    }
+                    if to == j {
+                        return (k, None, least);
+                    }
+                    let (sum, l) = (held[to].1, len[to]);
+                    if sum + w <= l {
+                        let moved = if cw { 0.5 * w - place } else { place - l + 0.5 * w };
+                        return (k, Some((moved, to, place)), least);
+                    }
+                    let added = over(sum + w, l) - over(sum, l);
+                    if least.is_none_or(|(a, ..)| added < a) {
+                        least = Some((added, to, place));
+                    }
+                }
+            };
+            let ((cw_end, cw_room, cw_least), (ccw_end, ccw_room, ccw_least)) = (walk(true), walk(false));
+            // The lesser of the two ways' measures, clockwise on a tie.
+            let lesser = |cw: Option<(f32, usize, f32)>, ccw: Option<(f32, usize, f32)>| match (cw, ccw) {
+                (Some(a), Some(b)) if b.0 < a.0 => Some((false, ccw_end, b.1, b.2)),
+                (Some(a), _) => Some((true, cw_end, a.1, a.2)),
+                (None, Some(b)) => Some((false, ccw_end, b.1, b.2)),
+                (None, None) => None,
+            };
+            let spares = |k: usize| over(held[j].1, len[j]) - over(held[j].1 - width(k), len[j]);
+            let shed = lesser(cw_room, ccw_room).or_else(|| {
+                lesser(
+                    cw_least.filter(|&(added, ..)| added < spares(cw_end)),
+                    ccw_least.filter(|&(added, ..)| added < spares(ccw_end)),
+                )
+            });
+            let Some((cw, k, to, place)) = shed else {
+                break;
+            };
+            if cw {
+                held[j].0.pop_back();
+                held[to].0.push_front((place, k));
+            } else {
+                held[j].0.pop_front();
+                held[to].0.push_back((place, k));
+            }
+            held[j].1 -= width(k);
+            held[to].1 += width(k);
+        }
+    }
+    let mut at = vec![0.0_f32; ends.len()];
+    for (j, (members, _)) in held.iter().enumerate() {
+        let Some(&(_, last)) = members.back() else {
+            continue;
+        };
+        let local: Vec<(f32, f32)> = members.iter().map(|&(place, k)| (place, width(k))).collect();
+        let placed = held_apart(&local, 0.0);
+        let mut offset = 0.0_f32;
+        let mut offsets = Vec::with_capacity(members.len());
+        for (i, &(_, k)) in members.iter().enumerate() {
+            if i > 0 {
+                offset += 0.5 * (width(members[i - 1].1) + width(k));
+            }
+            offsets.push(offset);
+        }
+        let (low, high) = (0.5 * width(members[0].1), len[j] - 0.5 * width(last) - offset);
+        for (i, &(_, k)) in members.iter().enumerate() {
+            let from = placed[i] - offsets[i];
+            let from = if low <= high {
+                from.clamp(low, high)
+            } else {
+                0.5 * (low + high)
+            };
+            at[k] = (lo[j] + from + offsets[i]).rem_euclid(perimeter);
+        }
+    }
+    // A stretch left overflowing reaches over its walls, perhaps onto the
+    // ends past them: the walls yield to the ends, held apart from where
+    // the stretches put them.
+    if (0..m).any(|j| held[j].1 > len[j]) {
+        let mut order: Vec<usize> = (0..ends.len()).collect();
+        order.sort_by(|&a, &b| at[a].total_cmp(&at[b]).then(a.cmp(&b)));
+        let placed: Vec<(f32, f32)> = order.iter().map(|&k| (at[k], width(k))).collect();
+        for (&k, place) in order.iter().zip(held_apart(&placed, perimeter)) {
+            at[k] = place;
+        }
+    }
+    at
+}
+
 /// Where the ray from `outline`'s center toward `toward` leaves it: on an
 /// ellipse exactly; on a rounded rectangle, where it leaves the
 /// rectangle, which the nearest-point search then takes onto a rounded

@@ -154,15 +154,37 @@ its lines centered.
 **A portal end** sits on its own node's outline: at `border_t`, a
 fraction of the outline's perimeter from the start of its top side,
 clockwise; unset, where the ray from its node's center toward the other
-node's center leaves the outline, so it faces the other end. The ends
-with `border_t` unset at one node are held apart along the outline, no
-two nearer, center to center, than half the larger sides of their
-markers' and labels' boxes summed; a run of them that had to move is
-centered where they face. It is moved
-`offset` along the outline's outward normal there, and its marker is set
-just outside that point. Its label sits beside the marker, further out
-along the same normal by the label's `offset`; a portal end's label has
-no `t`.
+node's center leaves the outline, so it faces the other end. Every end
+is moved `offset` along the outline's outward normal there, and its
+marker is set just outside that point. Its label sits beside the
+marker, further out along the same normal by the label's `offset`; a
+portal end's label has no `t`.
+
+The ends with `border_t` unset at one node are held apart along the
+outline, no two nearer, center to center, than half the larger sides of
+their markers' and labels' boxes summed; a run of them that had to move
+is centered where they face. They also keep clear of the connectors and
+line links that leave the node. Wherever such a path's body or caps —
+not its label — come within the band the node's ends take, from the
+outline to as far out as the farthest of them reaches and as far in as
+the most inward, that ink walls off the place along the outline nearest
+it: an end that reaches less far keeps clear of ink it would not have
+met. An end facing into a wall goes to the nearer of the wall's edges
+(clockwise on a tie), half its own width past it. A free stretch
+between two walls too short for the ends facing into it passes them
+on, one at a time — its first end counterclockwise or its last
+clockwise — to the nearest stretch with room for the end, either way
+round, clockwise on a tie: a greedy rule, not the least moves overall.
+When neither way has room, the end goes to the stretch it overflows
+least, if that is less than it overflows where it is. A stretch left
+overflowing has its ends packed tight, centered on it and over both its
+walls by as much; and since that may reach the ends past a wall, the
+ends are then held apart round the whole outline from where they were
+put, as above. So an end may sit on a path, never on another end,
+whenever their widths fit the perimeter.
+
+An end with `border_t` set is never moved by the others or by the
+paths: it is drawn where its `border_t` says, on a path or not.
 
 ## How
 

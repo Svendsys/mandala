@@ -32,6 +32,9 @@ pub mod halves_tests;
 /// The longest path placement lays (#363).
 pub mod limit_tests;
 pub mod lines_tests;
+/// The place along a path nearest a point (#394).
+#[cfg(test)]
+mod nearest_tests;
 /// A placement along an open path's work budget (#313).
 #[cfg(test)]
 mod open_budget_tests;

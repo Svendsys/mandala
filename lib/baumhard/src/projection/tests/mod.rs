@@ -34,6 +34,9 @@ mod notdef_bound_tests;
 /// The oracle's sweeps over the corpus.
 #[cfg(test)]
 mod oracle_tests;
+/// Portal ends kept clear of the paths leaving their node (#394).
+#[cfg(test)]
+mod portal_clear_tests;
 /// A glyph-layer presentation's body as run mutations, spelled op by
 /// op.
 #[cfg(test)]

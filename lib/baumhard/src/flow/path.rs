@@ -1274,56 +1274,126 @@ impl ArcPath {
         (point, tangent, Some((index, local)))
     }
 
-    /// Where along the path the point nearest `p` lies: a sampling every
-    /// [`NEAREST_SAMPLES`]th of the path, then a golden-section search
-    /// between the best sample's neighbors — across the seam of a closed
-    /// path, the result in `0.0..length` — on an open one within its
-    /// ends. On a convex path whose nearest point is unique, that point;
-    /// ties go to the first. `0.0` for an empty path.
+    /// Where along the path the point nearest `p` lies — across the seam
+    /// of a closed path, the result in `0.0..length`; on an open one
+    /// within its ends — found stretch by stretch, the nearest of them
+    /// kept, ties to the lowest place:
     ///
-    /// Cost: [`NEAREST_SAMPLES`] path lookups, and [`NEAREST_ROUNDS`] more.
+    /// - a side, exactly: `p`'s projection on its line, held to its ends;
+    /// - an arc, exactly: `p`'s angle about its center, held to its ends —
+    ///   past them, the nearer end, its start on a tie, and its start for
+    ///   `p` at its center, which every point of it is as near;
+    /// - a table (an ellipse's quarter, a Bézier), from its samples: each
+    ///   sample no further from `p` than the nearest sample is and the
+    ///   table's widest spacing, refined by a golden-section search
+    ///   between its two neighbors. The nearest point lies between two
+    ///   neighboring samples at most that spacing apart along the curve,
+    ///   so one of them is within half of it of the point, and no further
+    ///   from `p` than the point's distance and half the spacing — a
+    ///   sample so searched, whose neighbors bracket the point. The search
+    ///   finds the nearest point of a bracket where the distance from `p`
+    ///   falls to one least value and rises after it within the bracket's
+    ///   two spacings, as it does on a table sampled finer than its curve
+    ///   bends.
+    ///
+    /// So a point by a thin outline is never found on its far side, as a
+    /// sampling of the whole path at a fixed count found it where the
+    /// samples lay further apart than the outline is thick. `0.0` for an
+    /// empty path or a `p` that is not finite.
+    ///
+    /// Cost: O(stretches), each table's samples, and [`NEAREST_ROUNDS`]
+    /// lookups for each sample searched.
     pub(crate) fn nearest(&self, p: Vec2) -> f32 {
         // A length that is not a number is no length either.
-        if self.stretches.is_empty() || self.length.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        if self.stretches.is_empty()
+            || self.length.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+            || !p.is_finite()
+        {
             return 0.0;
         }
-        let step = self.length / NEAREST_SAMPLES as f32;
-        // Not squared: from a point further off than the root of the
-        // largest `f32` every squared distance is infinite, and the first
-        // sample was taken for all.
-        let distance = |s: f32| length_of(self.at(s).0 - p);
-        let mut best = (f32::INFINITY, 0.0_f32);
-        for k in 0..=NEAREST_SAMPLES {
-            let s = step * k as f32;
-            let d = distance(s);
-            if d < best.0 {
-                best = (d, s);
+        let tau = std::f32::consts::TAU;
+        // Measured so that a point further off than the root of the
+        // largest `f32`, whose squared distances pass every `f32`, still
+        // tells near from far.
+        let distance = |q: Vec2| length_of(q - p);
+        let mut best: Option<(f32, f32)> = None;
+        let mut keep = |d: f32, s: f32| {
+            if best.is_none_or(|(near, _)| d < near) {
+                best = Some((d, s));
             }
-        }
-        // On a closed path the bracket runs across the seam, which `at`
-        // wraps: a nearest point just before it is found from a best
-        // sample at its start.
-        let closed = self.winding != 0.0;
-        let (mut low, mut high) = if closed {
-            (best.1 - step, best.1 + step)
-        } else {
-            ((best.1 - step).max(0.0), (best.1 + step).min(self.length))
         };
-        let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
-        for _ in 0..NEAREST_ROUNDS {
-            let a = high - ratio * (high - low);
-            let b = low + ratio * (high - low);
-            if distance(a) <= distance(b) {
-                high = b;
-            } else {
-                low = a;
+        for (stretch, &start) in self.stretches.iter().zip(&self.starts) {
+            match stretch {
+                Stretch::Line { from, dir, len } => {
+                    let t = (p - *from).dot(*dir).clamp(0.0, *len);
+                    keep(distance(*from + *dir * t), start + t);
+                }
+                Stretch::Arc {
+                    center,
+                    radius,
+                    angle,
+                    turn,
+                    len,
+                } => {
+                    let t = if p == *center {
+                        0.0
+                    } else {
+                        let a = (p.y - center.y).atan2(p.x - center.x);
+                        let swept = ((a - angle) * turn).rem_euclid(tau) * radius;
+                        // Past the arc's end: its nearer end, its start on
+                        // a tie.
+                        if swept <= *len {
+                            swept
+                        } else if tau * radius - swept <= swept - len {
+                            0.0
+                        } else {
+                            *len
+                        }
+                    };
+                    keep(distance(stretch.at(t).0), start + t);
+                }
+                Stretch::Table {
+                    param,
+                    params,
+                    distances,
+                    ..
+                } => {
+                    let n = params.len().min(distances.len());
+                    if n == 0 {
+                        continue;
+                    }
+                    let near: Vec<f32> = (0..n).map(|j| distance(param.point(params[j]))).collect();
+                    let least = near.iter().copied().fold(f32::INFINITY, f32::min);
+                    let widest = distances.windows(2).map(|w| w[1] - w[0]).fold(0.0_f32, f32::max);
+                    let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
+                    for j in 0..n {
+                        if near[j].total_cmp(&(least + widest)).is_gt() {
+                            continue;
+                        }
+                        keep(near[j], start + distances[j]);
+                        let (mut low, mut high) =
+                            (distances[j.saturating_sub(1)], distances[(j + 1).min(n - 1)]);
+                        let along = |s: f32| distance(stretch.at(s).0);
+                        for _ in 0..NEAREST_ROUNDS {
+                            let a = high - ratio * (high - low);
+                            let b = low + ratio * (high - low);
+                            if along(a) <= along(b) {
+                                high = b;
+                            } else {
+                                low = a;
+                            }
+                        }
+                        let found = 0.5 * (low + high);
+                        keep(along(found), start + found);
+                    }
+                }
             }
         }
-        let found = 0.5 * (low + high);
-        if closed {
-            found.rem_euclid(self.length)
+        let s = best.map_or(0.0, |(_, s)| s);
+        if self.winding != 0.0 {
+            s.rem_euclid(self.length)
         } else {
-            found
+            s.clamp(0.0, self.length)
         }
     }
 
@@ -1848,11 +1918,8 @@ pub(crate) fn direction_of(v: Vec2) -> Option<Vec2> {
     }
 }
 
-/// How many samples [`ArcPath::nearest`] takes along a path.
-pub(crate) const NEAREST_SAMPLES: usize = 2048;
-
 /// How many rounds of golden-section search [`ArcPath::nearest`] refines
-/// its best sample with: a bracket of two samples closes by a factor of
+/// a table's sample with: a bracket of two samples closes by a factor of
 /// about 10⁷.
 pub(crate) const NEAREST_ROUNDS: usize = 34;
 
