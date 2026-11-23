@@ -8,6 +8,7 @@ use baumhard::core::tests::primitives_tests::*;
 use baumhard::document::tests::bounds_tests::*;
 use baumhard::document::tests::deep_tests::*;
 use baumhard::document::tests::deps_tests::*;
+use baumhard::document::tests::edit_buffer_tests::*;
 use baumhard::document::tests::element_tests::*;
 use baumhard::document::tests::format_tests::*;
 use baumhard::document::tests::ids_tests::*;
@@ -2088,6 +2089,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_compose_replaces_spans", |b| {
         b.iter(do_document_compose_replaces_spans)
+    });
+    c.bench_function("edit_buffer_reads_every_text_owner", |b| {
+        b.iter(do_edit_buffer_reads_every_text_owner)
+    });
+    c.bench_function("edit_buffer_inserts_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_inserts_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_deletes_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_deletes_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_styles_across_span_boundaries", |b| {
+        b.iter(do_edit_buffer_styles_across_span_boundaries)
+    });
+    c.bench_function("edit_buffer_counts_multi_codepoint_clusters", |b| {
+        b.iter(do_edit_buffer_counts_multi_codepoint_clusters)
+    });
+    c.bench_function("edit_buffer_normalizes_equal_neighbors_only", |b| {
+        b.iter(do_edit_buffer_normalizes_equal_neighbors_only)
+    });
+    c.bench_function("edit_buffer_takes_ime_payloads_as_main_did", |b| {
+        b.iter(do_edit_buffer_takes_ime_payloads_as_main_did)
     });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)
