@@ -1119,6 +1119,7 @@ fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)
         ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
         ("theme", vec![&theme::GRAMMAR], theme::routed_names()),
         ("path", vec![&path::GRAMMAR], path::routed_names()),
+        ("path label", vec![&path::LABEL], path::label_routed_names()),
         ("label", vec![&label::GRAMMAR], label::routed_names()),
     ]
 }

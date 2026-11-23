@@ -158,6 +158,21 @@ pub(crate) fn routed_names() -> Vec<&'static str> {
     route::names(ROUTES)
 }
 
+/// Which handler each subverb of [`LABEL`] runs.
+#[derive(Clone, Copy)]
+enum LabelRoute {
+    Edit,
+}
+
+const LABEL_ROUTES: &Routes<LabelRoute> = &[("edit", LabelRoute::Edit)];
+
+/// The names [`LABEL_ROUTES`] handles, for the registry test in
+/// `console::spec::tests`.
+#[cfg(test)]
+pub(crate) fn label_routed_names() -> Vec<&'static str> {
+    route::names(LABEL_ROUTES)
+}
+
 pub const COMMAND: Command = Command {
     name: "path",
     aliases: &[],
@@ -185,9 +200,11 @@ fn execute_path(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return super::edit(eff, steps, "path");
         }
     };
-    if let Some(Route::Edit) = route::lookup(ROUTES, subverb) {
-        let on_label = std::ptr::eq(descent.level, &LABEL);
-        return edit_path(eff, on_label);
+    if std::ptr::eq(descent.level, &LABEL) {
+        return match route::lookup(LABEL_ROUTES, subverb) {
+            Some(LabelRoute::Edit) => edit_path(eff, true),
+            None => ExecResult::err(route::miss(descent.level, subverb)),
+        };
     }
     let doc = eff.document();
     let (steps, label) = match route::lookup(ROUTES, subverb) {
@@ -206,7 +223,8 @@ fn execute_path(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 "path cap",
             )
         }
-        Some(Route::Edit) | None => return ExecResult::err(route::miss(descent.level, subverb)),
+        Some(Route::Edit) => return edit_path(eff, false),
+        None => return ExecResult::err(route::miss(descent.level, subverb)),
     };
     super::edit(eff, steps, label)
 }

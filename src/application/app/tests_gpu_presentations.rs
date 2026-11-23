@@ -588,6 +588,8 @@ const AFTER_ANOTHER: &[&str] = &[
     "ReparentToTarget",
     "ConnectToTarget",
     "ReplaceFontFamily",
+    // A section is edited once NodeEdit picks it (V1-C8).
+    "EnterSectionEdit",
     // A label is placed once a path has one.
     "SetLabelPosition",
     PORTAL_LINE,
@@ -667,6 +669,24 @@ fn sequences() -> Vec<Vec<Step>> {
             act("Undo"),
         ],
         vec![act("CreateOrphanNode"), act("Undo"), act("Redo")],
+        // The editors (V1-C8): a session typed into, then committed as
+        // one entry or canceled away.
+        vec![
+            act("EnterNodeEdit"),
+            act("EnterSectionEdit"),
+            act("TextEditInsertSpace"),
+            act("TextEditCommit"),
+        ],
+        vec![
+            act("EnterNodeEdit"),
+            act("EnterSectionEdit"),
+            act("TextEditCancel"),
+        ],
+        vec![
+            act("LabelEditOnSelection"),
+            act("LabelEditInsertSpace"),
+            act("LabelEditCommit"),
+        ],
         // A replacement rewrites an installed family the map names, so
         // one is named first (#329).
         vec![
@@ -738,8 +758,8 @@ fn ran(reply: &Value) -> bool {
 /// walk knows a reason: its Action is a key of an open text editor's or
 /// of the console's own line, or one of
 /// [`AFTER_ANOTHER`]; its line is one of [`AFTER_ANOTHER`] or of
-/// [`REFUSED_LINES`], or of a verb not yet rebuilt (a reply says so).
-fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
+/// [`REFUSED_LINES`].
+fn excuse(step: &Step) -> Option<&'static str> {
     match step {
         Step::Act(action) => {
             let kind = match action {
@@ -894,7 +914,7 @@ fn test_every_action_verb_and_edit_leaves_what_it_leaves_with_nothing_playing() 
     let mut idle = Vec::new();
     for (steps, any, replies) in &ran_once {
         match &steps[..] {
-            [step] => match (any, excuse(step, replies)) {
+            [step] => match (any, excuse(step)) {
                 (true, None) | (false, Some(_)) => {}
                 (false, None) => idle.push(format!(
                     "`{}` ran under no selection ({}): a mistyped line or payload compares nothing",

@@ -196,18 +196,36 @@ mod tests {
         assert!(side.is_none());
     }
 
-    /// `mode node-edit` refuses with its owner named, and requests
-    /// nothing of the dispatcher.
+    /// `mode node-edit` asks for NodeEdit on the one selected node and
+    /// closes the console; on one of the node's sections, on that node.
+    /// Control: with nothing selected it is refused, asks for nothing and
+    /// leaves the console open.
     #[test]
-    fn test_mode_node_edit_refuses_naming_its_owner() {
+    fn test_mode_node_edit_enters_node_edit_on_the_selected_node() {
         let mut doc = MindMapDocument::new_blank(None, 50);
-        let (result, side, close) = run_mode("mode node-edit", &mut doc);
-        match result {
-            ExecResult::Err(message) => assert!(message.contains(super::super::TEXT_OWNER), "{message}"),
-            other => panic!("mode node-edit must refuse: {other:?}"),
+        let (refused, side, close) = run_mode("mode node-edit", &mut doc);
+        assert!(
+            matches!(refused, ExecResult::Err(_)),
+            "nothing selected: {refused:?}"
+        );
+        assert!(side.is_none() && !close);
+
+        doc.create_root_for_test();
+        let node = doc
+            .doc()
+            .node_by_ident(baumhard::document::ids::NodeIdent(1))
+            .expect("the root is node 1");
+        let section = doc.doc().children(node).next().expect("a new node has a section");
+        for selected in [node, section] {
+            doc.selection.select_only(selected);
+            let (result, side, close) = run_mode("mode node-edit", &mut doc);
+            assert!(matches!(result, ExecResult::Ok(_)), "{result:?}");
+            assert!(
+                matches!(side, Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::NodeEdit { node: n })) if n == node),
+                "on {selected:?}"
+            );
+            assert!(close);
         }
-        assert!(side.is_none());
-        assert!(!close);
     }
 
     #[test]
