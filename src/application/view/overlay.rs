@@ -343,6 +343,11 @@ pub(crate) struct Dim {
     excluded: Vec<NodeId>,
     /// Every run stamped now, by layer and glyph element.
     stamped: rustc_hash::FxHashSet<(Layer, NodeId)>,
+    /// Every run the last plan cleared or stamped: what the tests that
+    /// hold a pass to its changes read, since a stamp a run already wore
+    /// writes no journal entry. Test builds only.
+    #[cfg(test)]
+    last_planned: Vec<(Layer, NodeId)>,
 }
 
 impl Dim {
@@ -356,6 +361,12 @@ impl Dim {
     #[cfg(test)]
     pub(crate) fn stamped_runs(&self) -> Vec<(Layer, NodeId)> {
         self.stamped.iter().copied().collect()
+    }
+
+    /// Every run the last plan cleared or stamped. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn last_planned(&self) -> &[(Layer, NodeId)] {
+        &self.last_planned
     }
 
     /// Whether the run `glyph` of `layer` is one the dim stamps for
@@ -453,6 +464,10 @@ impl Dim {
         self.active = active;
         self.excluded.clear();
         self.excluded.extend_from_slice(excluded);
+        #[cfg(test)]
+        {
+            self.last_planned = first.runs().chain(second.runs()).collect();
+        }
         (first, second)
     }
 

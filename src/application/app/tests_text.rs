@@ -2,7 +2,8 @@
 
 //! The text editors' view, renderer-free (`MapView::sync_for_test`):
 //! the caret moves with typing and a pass that changed nothing — a pan's
-//! — writes no chrome; editing a ring re-projects that ring alone; the
+//! — writes no chrome; editing a ring re-projects that ring and the paths
+//! that stop at its inks, nothing else; the
 //! caret follows its owner out of the drawing; NodeEdit's dim stamps
 //! every other node once and re-stamps only what a pass rewrote; the
 //! section frames outline a node of several sections; the editor's
@@ -97,44 +98,146 @@ fn test_the_caret_moves_with_typing_and_a_pan_places_nothing() {
     assert!(caret_at(&view).x < typed.x, "control: moved left, it goes back");
 }
 
-/// **Editing a ring re-projects that ring alone** (§6.5: a flow is shaped
-/// when its spans change, and only then): every run the pass rewrote is
-/// the ring's. Control: the pass did rewrite something, and an edit of a
-/// section of the same node rewrites that section's run, not the ring's.
-#[test]
-fn test_editing_a_ring_reprojects_only_that_ring() {
+/// Whether `element` — what a rewritten run draws — belongs to a path
+/// with an end on `node`: a connector, a line link or a portal end (and
+/// their caps and labels), by the nodes the path joins in the document.
+fn on_a_path_of(doc: &MindMapDocument, element: NodeId, node: NodeId) -> bool {
+    use baumhard::document::element::DocElement;
+    let mut at = element;
+    loop {
+        match doc.doc().get(at) {
+            Some(DocElement::Connector(_)) => {
+                let child = doc.doc().parent(at);
+                let parent = child.and_then(|c| doc.doc().parent(c));
+                return child == Some(node) || parent == Some(node);
+            }
+            Some(DocElement::Link(link)) => return doc.doc().parent(at) == Some(node) || link.to == node,
+            Some(DocElement::Node(_)) | None => return false,
+            Some(_) => match doc.doc().parent(at) {
+                Some(parent) => at = parent,
+                None => return false,
+            },
+        }
+    }
+}
+
+/// Type `text` into `ring` with the single-line editor, sync, and hand
+/// back what the pass rewrote, each with the element it draws; the
+/// session is canceled and the cancel synced.
+fn edit_ring(
+    doc: &mut MindMapDocument,
+    view: &mut MapView,
+    ring: NodeId,
+    text: &str,
+) -> Vec<(Layer, NodeId, Option<NodeId>)> {
     use crate::application::app::single_line_edit::{LineSession, SingleLineTarget};
+    let mut session = LineSession::open(doc, SingleLineTarget::Owner(ring), false).expect("opens");
+    session.type_key(&Key::Character(SmolStr::new(text)));
+    assert!(session.stage(doc));
+    let report = view.sync_for_test(doc).expect("the ring changed");
+    let rewritten = report
+        .rewritten
+        .iter()
+        .map(|&(layer, glyph)| (layer, glyph, view.projector().element_of(layer, glyph)))
+        .collect();
+    session.cancel(doc);
+    view.sync_for_test(doc).expect("canceled");
+    rewritten
+}
+
+/// **Editing a ring re-projects that ring, and the paths of its node,
+/// which stop at its inks (#296) — and nothing else** (§6.5; ruling on
+/// #249 amending "only that ring"):
+///
+/// 1. every run the pass rewrote is the ring's own, or a path's with an
+///    end on the ring's node — a connector, a line link, a portal end;
+/// 2. the ring's own run is among them;
+/// 3. an edit of a section of the same node — one that keeps its size,
+///    since a node that grows (D5) moves the outline its rings follow —
+///    rewrites no run of the ring;
+/// 4. a ring edit on another node rewrites nothing of this node's own
+///    runs, its sections' and its rings'.
+#[test]
+fn test_editing_a_ring_reprojects_the_ring_and_the_paths_that_stop_at_it() {
     let mut doc = text_fixture();
     let mut view = MapView::for_test(&doc);
-    let a = node(&doc, 1);
+    let (a, b) = (node(&doc, 1), node(&doc, 2));
     let ring = child(&doc, child(&doc, a, DocKind::Frame), DocKind::Ring);
-    let mut session = LineSession::open(&mut doc, SingleLineTarget::Owner(ring), false).expect("opens");
-    session.type_key(&Key::Character(SmolStr::new("!")));
-    assert!(session.stage(&mut doc));
-    let report = view.sync_for_test(&mut doc).expect("the ring changed");
-    assert!(!report.rewritten.is_empty(), "control: the pass rewrote the ring");
-    for &(layer, glyph) in &report.rewritten {
-        assert_eq!(
-            view.projector().element_of(layer, glyph),
-            Some(ring),
-            "{layer:?} {glyph:?} is the ring's"
+
+    let rewritten = edit_ring(&mut doc, &mut view, ring, "!");
+    for &(layer, glyph, element) in &rewritten {
+        let element = element.expect("a rewritten run draws an element");
+        assert!(
+            element == ring || on_a_path_of(&doc, element, a),
+            "{layer:?} {glyph:?} draws {element:?}, which is neither the ring nor a path of its node"
         );
     }
-    session.cancel(&mut doc);
-    view.sync_for_test(&mut doc).expect("canceled");
+    assert!(
+        rewritten.iter().any(|&(_, _, element)| element == Some(ring)),
+        "the ring's own run is rewritten"
+    );
+    // Control for 1: asked of b, which the re-laid line link (a to 3) has
+    // no end on, the same rule rejects a rewritten run.
+    assert!(
+        rewritten
+            .iter()
+            .any(|&(_, _, element)| element.is_some_and(|e| e != ring && !on_a_path_of(&doc, e, b))),
+        "control: the rule can reject a run"
+    );
+    let first = rewritten.clone();
 
+    // A section edit that keeps the node's size — a color: one that grows
+    // the node (D5) moves its outline, and with it the ring, as it should.
     let section = child(&doc, a, DocKind::Section);
-    let steps = compose::insert_text(doc.doc(), section, 0, "Z".into()).expect("composes");
-    doc.apply_for_test(EditRequest::new(steps, "type"))
+    let red =
+        baumhard::document::values::ColorRef::Rgba(baumhard::document::values::Rgba::opaque(0xff, 0, 0));
+    let steps = compose::style_range(
+        doc.doc(),
+        section,
+        0,
+        1,
+        vec![baumhard::document::mutation::ops::TextOp::SetColor(Some(red))],
+    )
+    .expect("composes");
+    doc.apply_for_test(EditRequest::new(steps, "color"))
         .expect("applies");
     let report = view.sync_for_test(&mut doc).expect("the section changed");
     assert!(
         report
             .rewritten
             .iter()
-            .all(|&(layer, glyph)| view.projector().element_of(layer, glyph) != Some(ring)),
-        "control: a section's edit rewrites no run of the ring"
+            .any(|&(layer, glyph)| view.projector().element_of(layer, glyph) == Some(section)),
+        "precondition: the section's run is rewritten"
     );
+    assert!(
+        report
+            .rewritten
+            .iter()
+            .all(|&(layer, glyph)| view.projector().element_of(layer, glyph) != Some(ring)),
+        "a section's edit rewrites no run of the ring"
+    );
+
+    let own: Vec<(Layer, NodeId)> = runs_of(doc.doc(), view.projector(), view.layers(), a);
+    assert!(
+        first
+            .iter()
+            .any(|&(layer, glyph, _)| own.contains(&(layer, glyph))),
+        "control for 4: a's own ring edit does rewrite a run of a's"
+    );
+    let other_ring = child(&doc, child(&doc, b, DocKind::Frame), DocKind::Ring);
+    let rewritten = edit_ring(&mut doc, &mut view, other_ring, "!");
+    assert!(
+        rewritten
+            .iter()
+            .any(|&(_, _, element)| element == Some(other_ring)),
+        "precondition: the other ring is rewritten"
+    );
+    for &(layer, glyph, _) in &rewritten {
+        assert!(
+            !own.contains(&(layer, glyph)),
+            "{layer:?} {glyph:?} is a's own, and was rewritten"
+        );
+    }
 }
 
 /// Apply `op` to `node`.
@@ -256,11 +359,13 @@ fn test_node_edit_dims_every_other_node_and_restamps_only_what_changed() {
         compose::insert_text(doc.doc(), child(&doc, c, DocKind::Section), 0, "Z".into()).expect("composes");
     doc.apply_for_test(EditRequest::new(steps, "type"))
         .expect("applies");
-    let report = view.sync_for_test(&mut doc).expect("an edit");
-    let b_runs = runs(&view, &doc, b);
+    view.sync_for_test(&mut doc).expect("an edit");
+    let c_runs = runs(&view, &doc, c);
+    let planned = view.dim().last_planned();
+    assert!(!planned.is_empty(), "the rewritten run of c is stamped again");
     assert!(
-        report.stamped.iter().all(|stamp| !b_runs.contains(stamp)),
-        "an edit of c re-stamps nothing of b"
+        planned.iter().all(|run| c_runs.contains(run)),
+        "an edit of c re-stamps c's runs and nothing else: {planned:?}"
     );
     assert!(
         runs(&view, &doc, c).iter().all(|&(l, g)| faded(&view, l, g)),
