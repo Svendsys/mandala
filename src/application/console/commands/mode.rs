@@ -228,6 +228,34 @@ mod tests {
         }
     }
 
+    /// `mode node-edit` says "pick" only where there is something to pick:
+    /// on a node of one section it says it is editing the node; on a node
+    /// of two (the text fixture's node 1), that a section is to be picked.
+    #[test]
+    fn test_mode_node_edit_says_pick_only_on_a_node_of_several_sections() {
+        let path = format!(
+            "{}/src/application/app/dispatch/families/fixtures/text.mandala.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut doc = MindMapDocument::load(&path, baumhard::document::writer::DEFAULT_HISTORY_LIMIT)
+            .expect("the fixture loads");
+        for (ident, said) in [
+            (2, "mode node-edit: editing the node"),
+            (1, "mode node-edit: editing the node; pick a section"),
+        ] {
+            let node = doc
+                .doc()
+                .node_by_ident(baumhard::document::ids::NodeIdent(ident))
+                .expect("in the fixture");
+            doc.selection.select_only(node);
+            let (result, _, _) = run_mode("mode node-edit", &mut doc);
+            assert!(
+                matches!(&result, ExecResult::Ok(line) if line == said),
+                "node {ident}: {result:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_mode_unknown_subverb_lists_the_three() {
         let mut doc = MindMapDocument::new_blank(None, 50);

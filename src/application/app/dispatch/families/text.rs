@@ -25,9 +25,9 @@
 //! **Clicks.** In NodeEdit a release inside the node picks there — a
 //! section, or the node — and one outside leaves the mode and goes on to
 //! select what it landed on ([`node_edit_click`], both targets). A drag
-//! on a picked section moves it (`app::live`), and the resize mode on it
-//! resizes it; those drags are native, as every drag is (CLAUDE.md
-//! "Drags that edit the map").
+//! on any section of the node moves it (`app::live`), as on `main`, and
+//! the resize mode on a selected section resizes it; those drags are
+//! native, as every drag is (CLAUDE.md "Drags that edit the map").
 //!
 //! **Keys.** While an editor is open it steals the keyboard
 //! (`event_keyboard`, `run_wasm::event_keyboard`): a key bound in its

@@ -2111,6 +2111,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("edit_buffer_takes_ime_payloads_as_main_did", |b| {
         b.iter(do_edit_buffer_takes_ime_payloads_as_main_did)
     });
+    c.bench_function(
+        "edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span",
+        |b| b.iter(do_edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span),
+    );
+    c.bench_function("edit_buffer_joins_a_crlf_as_main_did", |b| {
+        b.iter(do_edit_buffer_joins_a_crlf_as_main_did)
+    });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)
     });

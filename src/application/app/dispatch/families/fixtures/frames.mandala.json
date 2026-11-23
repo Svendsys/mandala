@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "name": "Frames",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [
+        {"spans": [{"text": "Garden", "weight": "bold"}]},
+        {"offset": [0.0, 50.0], "spans": [{"text": "Beds and paths"}]},
+        {"offset": [0.0, 100.0], "spans": [{"text": "Notes"}]}
+      ],
+      "frame": {"rings": [{"size": 0.1, "spans": [{"text": "roses, thyme and lavender"}]}]}
+    }
+  ]
+}

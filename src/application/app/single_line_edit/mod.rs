@@ -242,7 +242,12 @@ impl LineSession {
         });
         let Some((owner, buffer)) = opened else {
             doc.cancel(Interaction::SingleLineEdit);
-            return Err(LineRefusal::NO_LABEL);
+            // The refusal names what failed: an owner that holds no spans,
+            // or the label this session was to add.
+            return Err(match target {
+                SingleLineTarget::Owner(_) => LineRefusal::NOT_A_LINE,
+                SingleLineTarget::NewLabel { .. } => LineRefusal::NO_LABEL,
+            });
         };
         let mut session = LineSession {
             draft: Draft::new(owner, Interaction::SingleLineEdit, buffer),

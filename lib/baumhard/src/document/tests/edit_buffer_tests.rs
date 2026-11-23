@@ -13,15 +13,19 @@
 
 use crate::arena::NodeId;
 use crate::document::edit_buffer::EditBuffer;
+use crate::document::element::DocKind;
 use crate::document::element::{DocElement, SpanData, TextStyle};
 use crate::document::ids::Document;
-use crate::document::mutation::compose::{delete_text, insert_text, style_range};
+use crate::document::mutation::compose::{delete_text, insert_text, replace_spans, style_range};
 use crate::document::mutation::error::MutationError;
-use crate::document::mutation::ops::TextOp;
-use crate::document::mutation::step::DocStep;
+use crate::document::mutation::ops::{DocMutation, DocMutatorTree, SpanOp, TextOp};
+use crate::document::mutation::step::{DocStep, DocWalk};
 use crate::document::tests::test_support::{example, DocumentBuilder};
 use crate::document::values::{FontSize, Weight};
 use crate::document::writer::{ChangeSource, EditRequest};
+use crate::engine::anchor::Anchors;
+use crate::engine::key::BranchKey;
+use crate::engine::mutator::Mutator;
 
 /// The family emoji: one grapheme cluster of five code points.
 const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
@@ -282,6 +286,63 @@ pub fn do_edit_buffer_styles_across_span_boundaries() {
         "grown from the inherited size, not from nothing: {grown:?}"
     );
 
+    // A scale reads the inherited size the same way: 20 pt by 1.5.
+    let (mut doc, section) = section_of_sized(&spans, Some(FontSize::Pt(20.0)));
+    let mut buffer = EditBuffer::from_owner(&doc, section).unwrap();
+    buffer.style(0, 1, &TextOp::ScaleSize(1.5));
+    assert_eq!(buffer.spans()[0].style.size, Some(FontSize::Pt(30.0)));
+    let steps = style_range(&doc, section, 0, 1, vec![TextOp::ScaleSize(1.5)]).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(
+        buffer.spans(),
+        spans_of(&doc, section).as_slice(),
+        "style_range agrees"
+    );
+
+    // A ring's text is sized relative to its node (`places_in_frame`): a
+    // grown or scaled span of it computes a `Rel` size, read from the size
+    // the ring hands down, as the engine's span op does. A placed ring's
+    // spans carry no size of their own (`PlacedRingSpanSize`), so the
+    // writer refuses that span op and the buffer's spans staged whole —
+    // as the single-line editor stages them — alike, and the ring is
+    // left as it was.
+    for op in [TextOp::GrowSize(0.01), TextOp::ScaleSize(1.5)] {
+        let (builder, ids) = example();
+        let mut doc = builder.build().unwrap();
+        let before = spans_of(&doc, ids.ring);
+        let mut buffer = EditBuffer::from_owner(&doc, ids.ring).unwrap();
+        buffer.style(0, buffer.grapheme_len(), &op);
+        assert!(
+            matches!(buffer.spans()[0].style.size, Some(FontSize::Rel(_))),
+            "{op:?} on a ring computes a relative size: {:?}",
+            buffer.spans()[0].style.size
+        );
+        let spans: Vec<NodeId> = doc
+            .children(ids.ring)
+            .filter(|&id| matches!(doc.get(id), Some(DocElement::Span(_))))
+            .collect();
+        let mutator = DocMutatorTree::new_with(Mutator::new(
+            DocMutation::Span(SpanOp::Text(op.clone())),
+            BranchKey::new(DocKind::Span, 0),
+        ));
+        let by_op = doc.apply(
+            EditRequest::new(
+                vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(spans)))],
+                "op",
+            ),
+            ChangeSource::Input,
+        );
+        let steps = replace_spans(&doc, &[ids.ring], buffer.spans()).unwrap();
+        let by_buffer = doc.apply(EditRequest::new(steps, "buffer"), ChangeSource::Input);
+        let refusal =
+            |result: &Result<_, _>| result.is_err() && format!("{result:?}").contains("PlacedRingSpanSize");
+        assert!(
+            refusal(&by_op) && refusal(&by_buffer),
+            "{op:?}: refused alike: {by_op:?} {by_buffer:?}"
+        );
+        assert_eq!(spans_of(&doc, ids.ring), before, "{op:?}: the ring is as it was");
+    }
+
     let (doc, section) = section_of(&spans);
     let mut buffer = EditBuffer::from_owner(&doc, section).unwrap();
     let before = buffer.clone();
@@ -296,10 +357,12 @@ fn test_edit_buffer_counts_multi_codepoint_clusters() {
 
 /// A five-code-point family and an `e` with two marks are one cluster
 /// each, wherever they sit against a span edge: inserting after one
-/// steps past the whole cluster, and deleting one removes all of it.
+/// steps past the whole cluster, and deleting one removes all of it —
+/// and each step leaves what the builder it mirrors leaves in the
+/// document.
 pub fn do_edit_buffer_counts_multi_codepoint_clusters() {
     let spans = [styled(FAMILY, bold()), styled(MARKED, italic())];
-    let (doc, section) = section_of(&spans);
+    let (mut doc, section) = section_of(&spans);
     let mut buffer = EditBuffer::from_owner(&doc, section).unwrap();
     assert_eq!(buffer.grapheme_len(), 2);
     assert_eq!(buffer.insert(1, "x"), 1);
@@ -308,15 +371,92 @@ pub fn do_edit_buffer_counts_multi_codepoint_clusters() {
         [styled(&format!("{FAMILY}x"), bold()), styled(MARKED, italic())].as_slice(),
         "after the family, never inside it"
     );
+    let steps = insert_text(&doc, section, 1, "x".to_string()).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "insert_text agrees");
+
     buffer.delete(0, 1);
     assert_eq!(
         buffer.spans(),
         [styled("x", bold()), styled(MARKED, italic())].as_slice()
     );
+    let steps = delete_text(&doc, section, 0, 1).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "delete_text agrees");
+
     buffer.delete(1, 2);
     assert_eq!(buffer.text(), "x", "the marked letter goes whole");
+    let steps = delete_text(&doc, section, 1, 2).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "delete_text agrees");
+
     buffer.style(0, 1, &TextOp::SetItalic(Some(true)));
     assert_eq!(buffer.grapheme_len(), 1);
+    let steps = style_range(&doc, section, 0, 1, vec![TextOp::SetItalic(Some(true))]).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "style_range agrees");
+}
+
+#[test]
+fn test_edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span() {
+    do_edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span();
+}
+
+/// A cluster split across a span edge — a bold `e`, then an italic
+/// combining acute and an `x` — is counted span by span: three clusters,
+/// the mark one of its own at its span's start, as the builders count it.
+/// Styled so the two spans are equal, they merge, and the `e` and its mark
+/// are one cluster: two. The buffer and the builders agree at each step.
+pub fn do_edit_buffer_counts_a_cluster_across_a_span_edge_span_by_span() {
+    let spans = [styled("e", bold()), styled("\u{301}x", italic())];
+    let (mut doc, section) = section_of(&spans);
+    let mut buffer = EditBuffer::from_owner(&doc, section).unwrap();
+    assert_eq!(buffer.grapheme_len(), 3, "counted span by span");
+
+    let ops = [TextOp::SetWeight(None), TextOp::SetItalic(Some(true))];
+    for op in &ops {
+        buffer.style(0, 3, op);
+    }
+    assert_eq!(
+        buffer.spans(),
+        [styled("e\u{301}x", italic())].as_slice(),
+        "merged"
+    );
+    assert_eq!(buffer.grapheme_len(), 2, "one cluster once the spans are one");
+    let steps = style_range(&doc, section, 0, 3, ops.to_vec()).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "style_range agrees");
+    assert_eq!(
+        EditBuffer::from_owner(&doc, section).unwrap().grapheme_len(),
+        2,
+        "and counts it as the buffer does"
+    );
+}
+
+#[test]
+fn test_edit_buffer_joins_a_crlf_as_main_did() {
+    do_edit_buffer_joins_a_crlf_as_main_did();
+}
+
+/// `\n` typed after a `\r` joins it into one cluster, as `main`'s
+/// grapheme tests had it: the insert advances the caret by none, though
+/// the text changed, and deleting the cluster removes both. The builders
+/// agree.
+pub fn do_edit_buffer_joins_a_crlf_as_main_did() {
+    let (mut doc, section) = section_of(&[styled("a\r", TextStyle::default())]);
+    let mut buffer = EditBuffer::from_owner(&doc, section).unwrap();
+    assert_eq!(buffer.grapheme_len(), 2);
+    assert_eq!(buffer.insert(2, "\n"), 0, "the line feed joins the return");
+    assert_eq!((buffer.text().as_str(), buffer.grapheme_len()), ("a\r\n", 2));
+    let steps = insert_text(&doc, section, 2, "\n".to_string()).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "insert_text agrees");
+
+    buffer.delete(1, 2);
+    assert_eq!(buffer.text(), "a", "a delete takes both");
+    let steps = delete_text(&doc, section, 1, 2).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(spans_of(&doc, section), buffer.spans(), "delete_text agrees");
 }
 
 #[test]
@@ -378,24 +518,42 @@ fn test_edit_buffer_takes_ime_payloads_as_main_did() {
 pub fn do_edit_buffer_takes_ime_payloads_as_main_did() {
     let (doc, section) = section_of(&[]);
     let empty = EditBuffer::from_owner(&doc, section).unwrap();
+    // Each sequence's inserts made by the builder too, from the same
+    // empty section, leave what the buffer holds.
+    let agrees = |inserts: &[(usize, &str)], buffer: &EditBuffer| {
+        let (mut doc, section) = section_of(&[]);
+        for &(at, text) in inserts {
+            let steps = insert_text(&doc, section, at, text.to_string()).unwrap();
+            apply(&mut doc, steps);
+        }
+        assert_eq!(
+            spans_of(&doc, section),
+            buffer.spans(),
+            "insert_text agrees: {inserts:?}"
+        );
+    };
 
     let mut buffer = empty.clone();
     assert_eq!(buffer.insert(0, "n\u{00E9}"), 2);
     assert_eq!(buffer.text(), "n\u{00E9}");
+    agrees(&[(0, "n\u{00E9}")], &buffer);
 
     let jamo = "\u{1112}\u{1161}\u{11AB}";
     let mut buffer = empty.clone();
     assert_eq!(buffer.insert(0, jamo), 1);
     assert_eq!((buffer.text().as_str(), buffer.grapheme_len()), (jamo, 1));
+    agrees(&[(0, jamo)], &buffer);
 
     let mut buffer = empty.clone();
     buffer.insert(0, "e");
     assert_eq!(buffer.insert(1, "\u{0301}"), 0, "the mark merges into its base");
     assert_eq!(buffer.text(), "e\u{0301}", "but the text did change");
     assert_eq!(buffer.grapheme_len(), 1);
+    agrees(&[(0, "e"), (1, "\u{0301}")], &buffer);
 
     let mut buffer = empty;
     buffer.insert(0, "\u{0301}");
     assert_eq!(buffer.insert(0, "e"), 1, "a base absorbs the mark after it");
     assert_eq!((buffer.text().as_str(), buffer.grapheme_len()), ("e\u{0301}", 1));
+    agrees(&[(0, "\u{0301}"), (0, "e")], &buffer);
 }

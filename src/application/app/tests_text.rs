@@ -387,6 +387,342 @@ fn test_node_edit_dims_every_other_node_and_restamps_only_what_changed() {
     assert!(view.dim().stamped_runs().is_empty());
 }
 
+/// The runs of `node` that carry the dim's fade now.
+fn faded_runs(view: &MapView, doc: &MindMapDocument, node: NodeId) -> Vec<(Layer, NodeId)> {
+    runs_of(doc.doc(), view.projector(), view.layers(), node)
+        .into_iter()
+        .filter(|&(layer, glyph)| faded(view, layer, glyph))
+        .collect()
+}
+
+/// Edit `node`'s first section, so the next pass rewrites its run.
+fn edit_section_of(doc: &mut MindMapDocument, node: NodeId) {
+    let steps =
+        compose::insert_text(doc.doc(), child(doc, node, DocKind::Section), 0, "Z".into()).expect("composes");
+    doc.apply_for_test(EditRequest::new(steps, "type"))
+        .expect("applies");
+}
+
+/// **A pass that leaves NodeEdit and rewrites a dimmed run leaves no
+/// fade behind** (review of #399): the transition is planned before the
+/// pass's changes are read, so the rewritten run of `c` is not stamped
+/// under the mode the pass leaves, and nothing is stamped that the dim no
+/// longer tracks.
+///
+/// Control: the same edit in a pass that stays in NodeEdit leaves `c`
+/// dimmed — the rewrite is re-stamped, so an empty answer below is the
+/// leave's, not a rewrite that lost its stamp. And, seen red: the changes
+/// read against the state before the transition (the code this replaced)
+/// leaves `c`'s section run faded with the dim tracking nothing.
+#[test]
+fn test_leaving_node_edit_in_a_pass_that_rewrites_a_dimmed_run_clears_it() {
+    let (mut doc, mut view, a, c) = {
+        let doc = text_fixture();
+        let view = MapView::for_test(&doc);
+        let (a, c) = (node(&doc, 1), node(&doc, 3));
+        (doc, view, a, c)
+    };
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: a });
+    view.sync_for_test(&mut doc).expect("the dim is stamped");
+
+    edit_section_of(&mut doc, c);
+    view.sync_for_test(&mut doc).expect("an edit");
+    let c_runs = runs_of(doc.doc(), view.projector(), view.layers(), c);
+    assert_eq!(
+        faded_runs(&view, &doc, c),
+        c_runs,
+        "control: staying, c is dimmed"
+    );
+
+    edit_section_of(&mut doc, c);
+    view.follow_node_edit(&InteractionMode::Default);
+    view.sync_for_test(&mut doc).expect("leave and edit");
+    assert_eq!(faded_runs(&view, &doc, c), Vec::new(), "no fade on c");
+    assert!(view.dim().stamped_runs().is_empty(), "and the dim tracks nothing");
+}
+
+/// **NodeEdit moved from one node to another in a pass that rewrites the
+/// new one leaves it undimmed**, and dims the one it left: the rewritten
+/// run of `b` is read against `b` being edited.
+///
+/// Control, seen red: the changes read against the state before the
+/// transition — `b`'s rewritten run is stamped under `a`.
+#[test]
+fn test_moving_node_edit_to_a_node_rewritten_in_the_same_pass_leaves_it_undimmed() {
+    let mut doc = text_fixture();
+    let mut view = MapView::for_test(&doc);
+    let (a, b) = (node(&doc, 1), node(&doc, 2));
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: a });
+    view.sync_for_test(&mut doc).expect("the dim is stamped");
+    assert!(
+        !faded_runs(&view, &doc, b).is_empty(),
+        "precondition: b is dimmed"
+    );
+
+    edit_section_of(&mut doc, b);
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: b });
+    view.sync_for_test(&mut doc).expect("move and edit");
+    assert_eq!(
+        faded_runs(&view, &doc, b),
+        Vec::new(),
+        "the node edited now is not dimmed"
+    );
+    let a_runs = runs_of(doc.doc(), view.projector(), view.layers(), a);
+    assert_eq!(faded_runs(&view, &doc, a), a_runs, "the node left is");
+}
+
+/// **A node that joins `excluded` in a pass that rewrites its run keeps no
+/// fade under the selection's tint**: no two overlays stamp one run.
+///
+/// Control, seen red: the changes read against the state before the
+/// transition — `c`'s rewritten run is stamped under the old `excluded`,
+/// and wears both the fade and the tint.
+#[test]
+fn test_a_node_joining_excluded_while_its_run_is_rewritten_is_not_dimmed() {
+    let mut doc = text_fixture();
+    let mut view = MapView::for_test(&doc);
+    let (a, c) = (node(&doc, 1), node(&doc, 3));
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: a });
+    view.sync_for_test(&mut doc).expect("the dim is stamped");
+    assert!(
+        !faded_runs(&view, &doc, c).is_empty(),
+        "precondition: c is dimmed"
+    );
+
+    edit_section_of(&mut doc, c);
+    doc.selection.select_only(c);
+    view.sync_for_test(&mut doc).expect("select and edit");
+    assert_eq!(faded_runs(&view, &doc, c), Vec::new(), "c is tinted, not dimmed");
+    assert!(
+        view.dim()
+            .stamped_runs()
+            .iter()
+            .all(|run| !runs_of(doc.doc(), view.projector(), view.layers(), c).contains(run)),
+        "and the dim does not track c"
+    );
+}
+
+/// An outline model with round numbers: cells 8 wide, rows 16 high, the
+/// horizontal stroke 8 below its run's top and the vertical 4 right of
+/// its left edge, each one unit thick. It stood 6 above, 8 below, 4 left
+/// and 4 right of what it outlined.
+fn round_model() -> crate::application::view::outline::StrokeModel {
+    crate::application::view::outline::StrokeModel {
+        advance: 8.0,
+        pitch: 16.0,
+        h_center: 8.0,
+        h_half: 0.5,
+        v_center: 4.0,
+        v_half: 0.5,
+    }
+}
+
+/// Whether two boxes share more than a touch.
+fn crosses(a: baumhard::flow::Rect, b: baumhard::flow::Rect) -> bool {
+    const TOUCH: f32 = 1e-3;
+    a.origin.x < b.max().x - TOUCH
+        && b.origin.x < a.max().x - TOUCH
+        && a.origin.y < b.max().y - TOUCH
+        && b.origin.y < a.max().y - TOUCH
+}
+
+/// A box from `(x, y)` to `(x2, y2)`.
+fn rect(x: f32, y: f32, x2: f32, y2: f32) -> baumhard::flow::Rect {
+    baumhard::flow::Rect::new(glam::Vec2::new(x, y), glam::Vec2::new(x2 - x, y2 - y))
+}
+
+/// **A frame's strokes stand between the section's box and its rings'
+/// ink, never across it** (ruling on #249), row by row on one section
+/// box `(0, 0)–(100, 20)`:
+///
+/// - **room**: ink far off on every side — each stroke stands where the
+///   outline always stood, outside the box;
+/// - **tight**: ink 6 above — the top stroke stands between the box and
+///   the ink, clear of both;
+/// - **flush**: ink right on the box's top edge — no room, so the top
+///   stroke hugs the box from inside, touching neither the ink nor
+///   crossing it, and is drawn;
+/// - **into**: ink beyond the top edge that reaches into the box, as a
+///   ring's letters reach into a section's line box — the top stroke goes
+///   inside the box, under the ink, and is drawn;
+/// - **over**: ink centered on the box, lying across its top edge — no
+///   placement keeps the top stroke clear of it, so that side is not
+///   drawn, and the others are;
+/// - **letters**: the section's letters 8 inside its top, ink reaching 3
+///   into it — the top stroke goes inside, between the ink and the
+///   letters, a stroke's width off them;
+/// - **no room**: the letters 2 inside the top, ink reaching 3 into it —
+///   no stroke fits between them without crossing one or the other, so
+///   the top is not drawn.
+///
+/// In every row no drawn stroke overlaps an ink box.
+#[test]
+fn test_a_frames_strokes_stand_between_its_section_and_its_rings_ink() {
+    use crate::application::view::frames::place;
+    let model = round_model();
+    let section = rect(0.0, 0.0, 100.0, 20.0);
+    let far = [
+        rect(0.0, -40.0, 100.0, -30.0),
+        rect(0.0, 50.0, 100.0, 60.0),
+        rect(-40.0, 0.0, -30.0, 20.0),
+        rect(130.0, 0.0, 140.0, 20.0),
+    ];
+    let into = vec![rect(0.0, -8.0, 100.0, 3.0)];
+    let rows: [(&str, Option<baumhard::flow::Rect>, Vec<baumhard::flow::Rect>); 7] = [
+        ("room", None, far.to_vec()),
+        ("tight", None, vec![rect(0.0, -10.0, 100.0, -6.0)]),
+        ("flush", None, vec![rect(0.0, -5.0, 100.0, 0.0)]),
+        ("into", None, into.clone()),
+        ("over", None, vec![rect(0.0, -8.0, 100.0, 12.0)]),
+        ("letters", Some(rect(2.0, 8.0, 98.0, 18.0)), into.clone()),
+        ("no room", Some(rect(2.0, 2.0, 98.0, 18.0)), into),
+    ];
+    for (row, text, inks) in rows {
+        let (strokes, reach, shown) = place(section, text, &inks, &model);
+        let segments = crate::application::view::frames::segments(&strokes, reach, &model);
+        for (side, segment) in segments.iter().enumerate() {
+            if shown[side] {
+                assert!(
+                    inks.iter().all(|ink| !crosses(*segment, *ink)),
+                    "{row}: side {side} crosses ink: {segment:?}"
+                );
+            }
+        }
+        match row {
+            "room" => {
+                assert_eq!(shown, [true; 4], "{row}");
+                assert!(
+                    strokes.top < -model.h_half && strokes.bottom > 20.0 + model.h_half,
+                    "{row}: outside"
+                );
+                assert!(
+                    strokes.left < -model.v_half && strokes.right > 100.0 + model.v_half,
+                    "{row}: outside"
+                );
+            }
+            "tight" => {
+                assert!(shown[0], "{row}: drawn");
+                assert!(
+                    strokes.top + model.h_half < 0.0 && strokes.top - model.h_half > -6.0,
+                    "{row}: between the box and the ink: {}",
+                    strokes.top
+                );
+            }
+            "flush" => {
+                assert!(shown[0], "{row}: drawn");
+                assert!(
+                    strokes.top - model.h_half >= -1e-3
+                        && strokes.top + model.h_half <= 2.0 * model.h_half + 1e-3,
+                    "{row}: hugs the box from inside: {}",
+                    strokes.top
+                );
+            }
+            "into" => {
+                assert!(shown[0], "{row}: drawn");
+                assert!(
+                    strokes.top - model.h_half >= 3.0 - 1e-3 && strokes.top < 20.0,
+                    "{row}: inside the box, under the ink: {}",
+                    strokes.top
+                );
+            }
+            "letters" => {
+                assert!(shown[0], "{row}: drawn");
+                assert!(
+                    strokes.top - model.h_half >= 3.0 - 1e-3
+                        && strokes.top + model.h_half <= 8.0 - 2.0 * model.h_half + 1e-3,
+                    "{row}: between the ink and the letters: {}",
+                    strokes.top
+                );
+            }
+            _ => assert_eq!(shown, [false, true, true, true], "{row}: the top is hidden"),
+        }
+    }
+}
+
+/// **A NodeEdit frame never crosses its node's ring**, on a node of three
+/// sections spaced as a node lays them and one ring round them all
+/// (`fixtures/frames.mandala.json`), whose letters reach into the
+/// sections' line boxes. For every frame, thin and then heavy:
+///
+/// - no drawn stroke crosses a glyph the ring inks;
+/// - a side is left undrawn only where there was no room for it: where a
+///   ring glyph comes within two stroke widths of the section's own
+///   letters on that side, so no stroke fits between them;
+/// - and most sides are drawn (at least two of each frame's four).
+///
+/// Controls, seen red: the outline where it always stood
+/// (`StrokeModel::standing`, no clearance) crosses the ring where there
+/// was room, so the check hides sides it had no cause to; and the
+/// clearance read from the ring's one outer ink box (`ring.ink`, which
+/// lies over the sections) leaves every side undrawn.
+#[test]
+fn test_section_frames_never_cross_their_rings_ink() {
+    use crate::application::view::frames::{ring_inks, text_ink, HEAVY, THIN};
+    use crate::application::view::outline::StrokeModel;
+    let path = format!(
+        "{}/src/application/app/dispatch/families/fixtures/frames.mandala.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut doc = MindMapDocument::load(&path, baumhard::document::writer::DEFAULT_HISTORY_LIMIT)
+        .expect("the fixture loads");
+    let mut view = MapView::for_test(&doc);
+    let a = node(&doc, 1);
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: a });
+    view.sync_for_test(&mut doc).expect("the frames are drawn");
+    let inks = ring_inks(doc.doc(), view.projector(), view.layers(), a);
+    assert!(!inks.is_empty(), "precondition: the ring inks");
+    let sections: Vec<NodeId> = children_of_kind(doc.doc(), a, DocKind::Section).collect();
+    let mut swash = glyphon::SwashCache::new();
+    // The lease is taken in each check and given back before the next
+    // sync, which takes the font system itself.
+    let mut check = |view: &MapView, when: &str| {
+        let mut fonts = baumhard::font::fonts::FontSystemLease::new("test");
+        let models = [
+            StrokeModel::of(&THIN, &mut fonts),
+            StrokeModel::of(&HEAVY, &mut fonts),
+        ];
+        let frames: Vec<_> = view.frames().shown().iter().flatten().copied().collect();
+        assert_eq!(frames.len(), 3, "{when}: one per section");
+        for (frame, &section) in frames.iter().zip(&sections) {
+            let model = models[usize::from(frame.focused)];
+            let text = text_ink(view.projector(), section, &mut fonts, &mut swash).expect("letters");
+            let off = 2.0 * model.h_half.max(model.v_half);
+            let drawn = crate::application::view::frames::segments(&frame.strokes, frame.reach, &model);
+            for (side, segment) in drawn.into_iter().enumerate() {
+                if frame.shown[side] {
+                    assert!(
+                        inks.iter().all(|ink| !crosses(segment, *ink)),
+                        "{when}: side {side} crosses the ring: {segment:?}"
+                    );
+                    continue;
+                }
+                // The strip a stroke on this side would need between the
+                // letters and the ink: two stroke widths out from them.
+                let (lo, hi) = (text.origin, text.max());
+                let strip = match side {
+                    0 => rect(lo.x, lo.y - 2.0 * off, hi.x, lo.y),
+                    1 => rect(lo.x, hi.y, hi.x, hi.y + 2.0 * off),
+                    2 => rect(lo.x - 2.0 * off, lo.y, lo.x, hi.y),
+                    _ => rect(hi.x, lo.y, hi.x + 2.0 * off, hi.y),
+                };
+                assert!(
+                    inks.iter().any(|ink| crosses(strip, *ink)),
+                    "{when}: side {side} of {section:?} is undrawn though there was room"
+                );
+            }
+            assert!(
+                frame.shown.iter().filter(|&&drawn| drawn).count() >= 2,
+                "{when}: most of the frame is drawn: {:?}",
+                frame.shown
+            );
+        }
+    };
+    check(&view, "thin");
+    doc.selection.select_only(sections[1]);
+    view.sync_for_test(&mut doc).expect("the focus moved");
+    check(&view, "heavy");
+}
+
 /// **The section frames outline a node of several sections, the focused
 /// one heavy**, and follow the node and the focus; a pass that changed
 /// nothing writes none; a node of one section has none, as on `main`.
@@ -400,12 +736,7 @@ fn test_section_frames_outline_a_node_of_several_sections() {
     assert!(!entered.chrome.is_empty());
     let shown = |view: &MapView| view.frames().shown().iter().filter(|f| f.is_some()).count();
     assert_eq!(shown(&view), 2, "one per section");
-    assert!(view
-        .frames()
-        .shown()
-        .iter()
-        .flatten()
-        .all(|&(_, focused)| !focused));
+    assert!(view.frames().shown().iter().flatten().all(|frame| !frame.focused));
 
     let second = children_of_kind(doc.doc(), a, DocKind::Section)
         .nth(1)
@@ -413,7 +744,7 @@ fn test_section_frames_outline_a_node_of_several_sections() {
     doc.selection.select_only(second);
     view.sync_for_test(&mut doc).expect("the focus moved");
     assert_eq!(
-        view.frames().shown()[1].map(|(_, focused)| focused),
+        view.frames().shown()[1].map(|frame| frame.focused),
         Some(true),
         "the selected one is heavy"
     );
@@ -542,5 +873,218 @@ fn test_the_caret_and_range_are_read_from_each_owners_own_run() {
             );
         }
         firsts.push((what, first));
+    }
+}
+
+/// The centers of the clusters `owner`'s path run places, in text order,
+/// the first copy's — each with its grapheme index in the owner's one
+/// span (an ASCII span: a byte is a grapheme) — and the run's advance.
+fn cluster_centers(view: &MapView, owner: NodeId) -> (Vec<(usize, glam::Vec2)>, f32) {
+    use baumhard::gfx_structs::run::RunShape;
+    let (layer, glyph) = view.projector().glyphs_of(owner)[0];
+    let run = view
+        .layers()
+        .tree(layer)
+        .get(glyph)
+        .and_then(|n| n.get().glyph_run())
+        .expect("a run");
+    let RunShape::Path { run: shaped, placed } = run.shaped() else { panic!("a path run") };
+    let mut centers: Vec<(usize, glam::Vec2)> = Vec::new();
+    for g in &placed.glyphs {
+        let metrics = &shaped.glyphs[g.glyph as usize];
+        if !metrics.grapheme_start || centers.iter().any(|&(k, _)| k == metrics.bytes.start) {
+            continue;
+        }
+        let center = run.origin() + g.pos + glam::Vec2::new(metrics.advance * 0.5, shaped.line_height * 0.5);
+        centers.push((metrics.bytes.start, center));
+    }
+    centers.sort_by_key(|&(k, _)| k);
+    let advance = shaped.glyphs.first().map_or(0.0, |g| g.advance);
+    (centers, advance)
+}
+
+/// **On a ring's reversed line the caret stays between its neighbors**
+/// (review of #399): the fixture's ring lays its second line reversed
+/// against its path (the readable rule, D33: along the bottom the path
+/// runs left, the text right), and for every `k` the caret before grapheme
+/// `k` lies on the segment between the centers of clusters `k - 1` and
+/// `k` — which a caret that ran the wrong way along a stretch, or sat
+/// between the wrong pair, would not.
+///
+/// Control, seen red: the centers taken in reverse order.
+#[test]
+fn test_the_caret_on_a_reversed_ring_line_lies_between_its_neighbors() {
+    use crate::application::view::caret::caret_place;
+    let doc = text_fixture();
+    let view = MapView::for_test(&doc);
+    let ring = child(&doc, child(&doc, node(&doc, 1), DocKind::Frame), DocKind::Ring);
+    let (centers, _) = cluster_centers(&view, ring);
+    assert!(centers.len() > 3, "precondition: the ring places its text");
+    // The second line runs over the lower-left half, where the clockwise
+    // path runs leftward and up: laid reversed, it still reads left to
+    // right and down.
+    let middle = view.projector().node_rect(node(&doc, 1)).expect("drawn").center();
+    let lower: Vec<glam::Vec2> = centers
+        .iter()
+        .map(|&(_, c)| c)
+        .filter(|c| c.y > middle.y + 1.0)
+        .collect();
+    assert!(
+        lower.windows(2).any(|pair| pair[1].x > pair[0].x + 1.0),
+        "precondition: the second line is laid along the bottom, reading right"
+    );
+    for k in 1..centers.len() {
+        let (before, after) = (centers[k - 1].1, centers[k].1);
+        let at = caret_place(doc.doc(), view.projector(), view.layers(), ring, centers[k].0)
+            .expect("placed")
+            .0;
+        let off = at.distance(before) + at.distance(after) - before.distance(after);
+        assert!(
+            off < 0.01,
+            "caret {k} is not between clusters {} and {k}: {at}",
+            k - 1
+        );
+    }
+}
+
+/// **On a `Repeat` path the caret stays with the first copy**: the
+/// connector's content `─` is laid copy after copy, and the caret after
+/// its one grapheme sits half a cell past the first copy, not past the
+/// last.
+///
+/// Control, seen red: without the walk's stop at a repeated grapheme
+/// (`g <= prev`), every copy is a cluster and the caret lands on the last.
+#[test]
+fn test_the_caret_on_a_repeat_path_stays_with_the_first_copy() {
+    use crate::application::view::caret::caret_place;
+    use baumhard::gfx_structs::run::RunShape;
+    let doc = text_fixture();
+    let view = MapView::for_test(&doc);
+    let connector = child(&doc, node(&doc, 2), DocKind::Connector);
+    let (layer, glyph) = view.projector().glyphs_of(connector)[0];
+    let run = view
+        .layers()
+        .tree(layer)
+        .get(glyph)
+        .and_then(|n| n.get().glyph_run())
+        .expect("a run");
+    let RunShape::Path { run: shaped, placed } = run.shaped() else { panic!("a path run") };
+    assert!(placed.glyphs.len() > 3, "precondition: the content repeats");
+    let advance = shaped.glyphs[placed.glyphs[0].glyph as usize].advance;
+    let first =
+        run.origin() + placed.glyphs[0].pos + glam::Vec2::new(advance * 0.5, shaped.line_height * 0.5);
+    let at = caret_place(doc.doc(), view.projector(), view.layers(), connector, 1)
+        .expect("placed")
+        .0;
+    assert!(
+        at.distance(first) <= advance * 0.5 + 0.01,
+        "caret 1 is next to the first copy at {first}: {at}"
+    );
+}
+
+/// **A one-cluster owner's caret steps the way its text reads there**
+/// (review of #399): with node 2 moved under node 1 its connector runs
+/// down, and the one-glyph cap's carets before and after it sit above and
+/// below it, on its column — not beside it.
+///
+/// Control, seen red: the step taken along `x` whatever the path does.
+#[test]
+fn test_a_one_cluster_caret_steps_along_a_steep_path() {
+    use crate::application::view::caret::caret_place;
+    let mut doc = text_fixture();
+    let b = node(&doc, 2);
+    node_op(&mut doc, b, NodeOp::SetPosition(glam::Vec2::new(0.0, 400.0)));
+    let view = MapView::for_test(&doc);
+    let connector = child(&doc, b, DocKind::Connector);
+    let cap = child(&doc, connector, DocKind::CapEnd);
+    let place = |caret| {
+        caret_place(doc.doc(), view.projector(), view.layers(), cap, caret)
+            .expect("placed")
+            .0
+    };
+    let (before, after) = (place(0), place(1));
+    assert!(
+        (before.x - after.x).abs() < 0.01 && after.y - before.y > 1.0,
+        "above and below the cap: {before} then {after}"
+    );
+}
+
+/// **While the section editor is open in NodeEdit the status line counts
+/// the section being edited** (review of #399): `editing: 1 — section [2
+/// of 2]`, from the editor's focus though nothing is selected — and it
+/// says nothing of picking or of keys, which an open editor gives other
+/// meanings. Control: with the editor closed and nothing of the node
+/// selected, the place is `-`.
+#[test]
+fn test_the_node_edit_status_line_counts_the_section_being_edited() {
+    let mut doc = text_fixture();
+    let mut view = MapView::for_test(&doc);
+    let a = node(&doc, 1);
+    let second = children_of_kind(doc.doc(), a, DocKind::Section)
+        .nth(1)
+        .expect("two sections");
+    view.follow_node_edit(&InteractionMode::NodeEdit { node: a });
+    doc.selection.select_only(node(&doc, 3));
+    assert_eq!(
+        view.status(&doc).as_deref(),
+        Some("editing: 1 \u{2014} section [- of 2]"),
+        "control: nothing of the node focused"
+    );
+    let editor = TextEditor::Open(Box::new(
+        TextSession::open(&mut doc, second, false, false).expect("opens"),
+    ));
+    view.follow_editor(text_focus(&editor));
+    doc.selection.select_only(node(&doc, 3));
+    let line = view.status(&doc).expect("a line");
+    assert_eq!(line, "editing: 1 \u{2014} section [2 of 2]");
+    assert!(!line.contains("pick") && !line.contains("Enter"), "{line}");
+}
+
+/// **An outline's sides meet its corners** (review of #399): on boxes of
+/// several sizes, in the frames' thin glyphs and the rubber band's, each
+/// side's run starts where the top edge's line ends and ends where the
+/// bottom edge's line begins — so no side runs past a corner, nor falls
+/// short of one — and the edges' corners sit on the left and right
+/// strokes.
+///
+/// Control, seen red: the sides' rows counted by the point size rather
+/// than the line height they are laid at (the code this replaced), which
+/// left each side a fifth longer than its edges.
+#[test]
+fn test_an_outlines_sides_meet_its_corners() {
+    use crate::application::view::outline::{runs_for, StrokeModel, Strokes};
+    use baumhard::gfx_structs::run::RunShape;
+    let mut fonts = baumhard::font::fonts::FontSystemLease::new("test");
+    let height = |run: &baumhard::gfx_structs::run::GlyphRunData| match run.shaped() {
+        RunShape::Box(shaped) => shaped.size.y,
+        RunShape::Path { .. } => panic!("an outline run is a box run"),
+    };
+    for style in [
+        &crate::application::view::frames::THIN,
+        &crate::application::view::band::BAND,
+    ] {
+        let model = StrokeModel::of(style, &mut fonts);
+        for (w, h) in [(40.0, 10.0), (102.5, 28.8), (300.0, 120.0), (17.0, 61.0)] {
+            let strokes = Strokes::around(rect(0.0, 0.0, w, h), model.standing());
+            let reach = [(strokes.top, strokes.bottom); 2];
+            let [top, bottom, left, right] =
+                runs_for(Some(strokes), reach, [true; 4], &model, style, &mut fonts);
+            for side in [&left, &right] {
+                assert!(
+                    (side.origin().y - (top.origin().y + height(&top))).abs() < 0.01,
+                    "{w}x{h}: a side starts where the top edge's line ends"
+                );
+                assert!(
+                    (side.origin().y + height(side) - bottom.origin().y).abs() < 0.01,
+                    "{w}x{h}: a side ends where the bottom edge's line begins: {} vs {}",
+                    side.origin().y + height(side),
+                    bottom.origin().y
+                );
+            }
+            assert!(
+                (right.origin().x - left.origin().x - (strokes.right - strokes.left)).abs() < 0.01,
+                "{w}x{h}: the sides stand on the left and right strokes"
+            );
+        }
     }
 }

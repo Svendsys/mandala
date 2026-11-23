@@ -209,26 +209,25 @@ Three funnel gaps closed with them:
   `drain_frame.rs`, so a browser animation started and never
   ticked — first on the click-trigger path, then on this tier.
 
-`DoubleClickActivate` stays `wasm = NativeOnly`: its branch on a
-label, a ring, a cap, a portal end or a path's content still reaches
-the single-line editor (`families::text::dispatch_native`), and the
-"ANY NativeOnly branch" rule classifies on that. Flipping it to `Compatible` waits on
-the browser gaining a single-line editor.
+**The text Actions stay `wasm = NativeOnly`, as on `main`.**
+`DoubleClickActivate` and `EditSelection*` each have a branch — a
+double-click on, or a selection of, a label, a ring, a cap, a portal
+end or a path's content — that reaches the single-line editor
+(`families::text::dispatch_native`), which the browser lacks, and the
+"ANY NativeOnly branch" rule classifies on that; `EnterNodeEdit*` and
+`EnterSectionEdit` keep `main`'s classification. Flipping them to
+`Compatible` waits on the browser gaining a single-line editor.
 
-It is a member of the **mixed-branch set**, which is now one list —
-`keybinds::action::MIXED_BRANCH_ACTIONS` — read by both
-`lift_mixed_branch_for_wasm_macro` and
-`keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only` (gone).
-Written out twice, the two drifted: the test named three members and
-the lift named four. They could not simply be merged, either, because
-the members do **not** share a classification — `ExitMode` is
-mixed-branch and `Compatible`, since its native leftover is a step
-(the `hovered_node` clear) rather than a branch reaching native-only
-state. The list therefore carries the expected `WasmCompatibility`
-alongside each member: the test asserts it per member instead of
-asserting a blanket `NativeOnly`, and the lift's `debug_assert` fires
-in any test build for a member with no verdict arm. Adding a member
-now obliges both consumers instead of silently satisfying neither.
+**What the classification decides today is `act.action`, and only
+that.** On the browser `act.action` refuses a `NativeOnly` Action by name
+(`ipc/commands/act.rs`). A keystroke, a gesture or a macro step there
+runs every Action through the cross-platform dispatcher
+(`action_core::dispatch_compatible`) whatever its declaration: a browser
+Enter runs `EditSelection` into NodeEdit and the section editor, and a
+branch whose body is native answers `Unhandled` (a double-click on a
+single-line target is logged at `debug!`, `run_wasm::event_mouse_click`).
+The mixed-branch list and the macro lift that once read the declaration
+are gone, with the old dispatch, so no second reader can drift from it.
 
 ## Per-arm event-handler shape divergence
 

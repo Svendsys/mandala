@@ -404,23 +404,22 @@ impl Dim {
     ) -> (Planned, Planned) {
         let mut first = Planned::default();
         let mut second = Planned::default();
+        // What the projector removed is no run to clear or stamp.
         if let Some(changes) = changes {
             for layer in Layer::ALL {
                 for (glyph, touch) in changes.journal(layer).touched() {
                     if touch == Touch::Removed {
                         self.stamped.remove(&(layer, glyph));
-                        continue;
-                    }
-                    let dimmed = self
-                        .active
-                        .is_some_and(|a| Self::dims(doc, projector, layer, glyph, a, &self.excluded));
-                    if dimmed {
-                        self.stamped.insert((layer, glyph));
-                        first.stamp[layer.index()].push(glyph);
                     }
                 }
             }
         }
+        // The transition first, to the `active` and `excluded` this pass
+        // stands by, so what the changes re-stamp below is read against
+        // them: a run rewritten in the pass that leaves NodeEdit, moves it
+        // to another node, or puts its node in `excluded` is not stamped
+        // under the state the pass leaves behind.
+        let mut stamped_now = rustc_hash::FxHashSet::default();
         if self.active != active {
             for &(layer, glyph) in &self.stamped {
                 first.clear[layer.index()].push(glyph);
@@ -433,6 +432,7 @@ impl Dim {
                         let is_run = tree.get(glyph).is_some_and(|n| n.get().glyph_run().is_some());
                         if is_run && Self::dims(doc, projector, layer, glyph, active, excluded) {
                             self.stamped.insert((layer, glyph));
+                            stamped_now.insert((layer, glyph));
                             second.stamp[layer.index()].push(glyph);
                         }
                     }
@@ -456,7 +456,23 @@ impl Dim {
                     if Self::dims(doc, projector, layer, glyph, active, excluded)
                         && self.stamped.insert((layer, glyph))
                     {
+                        stamped_now.insert((layer, glyph));
                         second.stamp[layer.index()].push(glyph);
+                    }
+                }
+            }
+        }
+        // Then the runs the projector rewrote, which lost their stamp:
+        // stamped again when the state this pass stands by dims them.
+        if let (Some(changes), Some(active)) = (changes, active) {
+            for layer in Layer::ALL {
+                for (glyph, touch) in changes.journal(layer).touched() {
+                    if touch == Touch::Removed || stamped_now.contains(&(layer, glyph)) {
+                        continue;
+                    }
+                    if Self::dims(doc, projector, layer, glyph, active, excluded) {
+                        self.stamped.insert((layer, glyph));
+                        first.stamp[layer.index()].push(glyph);
                     }
                 }
             }

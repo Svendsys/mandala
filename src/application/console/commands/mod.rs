@@ -256,7 +256,27 @@ pub(super) fn enter_node_edit(eff: &mut ConsoleEffects, verb: &str) -> ExecResul
         ),
     );
     eff.close_console = true;
-    ExecResult::ok_msg(format!("{verb}: editing the node; pick a section"))
+    // "pick" only where there is something to pick: a node of one section
+    // has nothing to choose between (as the status line says, #249).
+    let sections = doc_sections(eff, node);
+    if sections > 1 {
+        ExecResult::ok_msg(format!("{verb}: editing the node; pick a section"))
+    } else {
+        ExecResult::ok_msg(format!("{verb}: editing the node"))
+    }
+}
+
+/// How many sections `node` has in the console's document. O(its
+/// children).
+fn doc_sections(eff: &mut ConsoleEffects, node: baumhard::arena::NodeId) -> usize {
+    use baumhard::document::element::DocKind;
+    let doc = eff.document();
+    doc.doc()
+        .children(node)
+        .filter(|&child| {
+            crate::application::document::selection::kind_of(doc.doc(), child) == Some(DocKind::Section)
+        })
+        .count()
 }
 
 /// Open the editor `open` names, closing the console: what the verbs that

@@ -229,7 +229,10 @@ pub(crate) fn caret_place(
     let run = owner_run(doc, projector, layers, owner).map(|(_, _, run)| run);
     let drawn = run.and_then(|run| match run.shaped() {
         RunShape::Box(shaped) => Some(box_caret(shaped, run.origin(), Align::Center, &graphemes, caret)),
-        RunShape::Path { run: shaped, placed } => path_caret(shaped, placed, run.origin(), &graphemes, caret),
+        RunShape::Path { run: shaped, placed } => {
+            let steep = |at: Vec2| steep_at(doc, projector, owner, at);
+            path_caret(shaped, placed, run.origin(), &graphemes, caret, &steep)
+        }
     });
     drawn.or_else(|| fallback_place(doc, projector, owner))
 }
@@ -331,16 +334,67 @@ fn box_caret(
     (origin + Vec2::new(x, top + height * 0.5), height)
 }
 
+/// Whether the path `owner`'s text is laid along runs steep at `at`, a
+/// placed glyph's center: whether its tangent there is at least 45° from
+/// level, as the readable rule classes a step (D33, `flow::place`), so
+/// text there reads top to bottom. A connector's or a link's content and
+/// its caps read their curve, near `at`; a ring reads its node's outline,
+/// whose tangent is square to the line from the node's center; a portal
+/// end's text is laid at a point, level. O(the curve samples, 64) for a
+/// path; O(1) otherwise.
+fn steep_at(doc: &Document, projector: &Projector, owner: NodeId, at: Vec2) -> bool {
+    let steep = |tangent: Vec2| {
+        let length = tangent.length();
+        length > 0.0 && (tangent.x / length).abs() <= std::f32::consts::FRAC_1_SQRT_2
+    };
+    let path = match kind_of(doc, owner) {
+        Some(DocKind::Connector | DocKind::Link) => Some(owner),
+        Some(DocKind::CapStart | DocKind::CapEnd) => doc.parent(owner),
+        Some(DocKind::Ring) => {
+            let center = doc
+                .parent(owner)
+                .and_then(|frame| doc.parent(frame))
+                .and_then(|node| projector.node_rect(node))
+                .map(|rect| rect.center());
+            return center.is_some_and(|center| {
+                let radial = at - center;
+                steep(Vec2::new(-radial.y, radial.x))
+            });
+        }
+        _ => None,
+    };
+    let Some(path) = path else {
+        return false;
+    };
+    const SAMPLES: usize = 64;
+    let points: Vec<Vec2> = (0..=SAMPLES)
+        .filter_map(|k| projector.point_along(path, k as f32 / SAMPLES as f32))
+        .collect();
+    let Some(nearest) = (0..points.len()).min_by(|&a, &b| {
+        points[a]
+            .distance_squared(at)
+            .total_cmp(&points[b].distance_squared(at))
+    }) else {
+        return false;
+    };
+    let before = points[nearest.saturating_sub(1)];
+    let after = points[(nearest + 1).min(points.len() - 1)];
+    steep(after - before)
+}
+
 /// The caret in a path flow: between the centers of the placed glyphs
-/// before and after it, the first copy's; at an end, half a step out.
-/// `None` when no placed glyph maps to the owner's text. O(the placed
-/// glyphs).
+/// before and after it, the first copy's; at an end, half a step out —
+/// the step between the last two centers, or for an owner that places
+/// one cluster, half its cell along the way its text reads there: down
+/// where the path is steep (`steep`), else right. `None` when no placed
+/// glyph maps to the owner's text. O(the placed glyphs).
 fn path_caret(
     shaped: &baumhard::flow::ShapedRun,
     placed: &baumhard::flow::PlacedRun,
     origin: Vec2,
     graphemes: &Graphemes,
     caret: usize,
+    steep: &dyn Fn(Vec2) -> bool,
 ) -> Option<(Vec2, f32)> {
     let height = shaped.line_height;
     // Each cluster's center, in text order, with its grapheme: the first
@@ -367,16 +421,24 @@ fn path_caret(
     }
     let after = clusters.iter().position(|&(g, _)| g >= caret);
     let center = |i: usize| clusters[i].1;
+    // One cluster: half its cell along the way the text reads there.
+    let half_cell = || {
+        if steep(center(0)) {
+            Vec2::new(0.0, height * 0.5)
+        } else {
+            Vec2::new(shaped.glyphs.first().map_or(0.0, |g| g.advance) * 0.5, 0.0)
+        }
+    };
     let place = match after {
         Some(0) if clusters.len() > 1 => center(0) - (center(1) - center(0)) * 0.5,
-        Some(0) => center(0) - Vec2::new(shaped.glyphs.first().map_or(0.0, |g| g.advance) * 0.5, 0.0),
+        Some(0) => center(0) - half_cell(),
         Some(i) => (center(i - 1) + center(i)) * 0.5,
         None => {
             let n = clusters.len();
             if n > 1 {
                 center(n - 1) + (center(n - 1) - center(n - 2)) * 0.5
             } else {
-                center(0) + Vec2::new(shaped.glyphs.first().map_or(0.0, |g| g.advance) * 0.5, 0.0)
+                center(0) + half_cell()
             }
         }
     };

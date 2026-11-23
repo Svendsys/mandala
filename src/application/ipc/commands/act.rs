@@ -211,8 +211,8 @@ fn native_only_refusal(action: &Action, browser: bool) -> Option<String> {
         format!(
             "{action:?} is native-only: its body needs a system the browser does not have yet \
              (`WasmCompatibility::NativeOnly`, work_plans/WASM_CONVERGENCE.md). On the browser, \
-             `act.action` runs the `Compatible` actions, which is every action a browser keystroke \
-             can run"
+             `act.action` runs only the `Compatible` actions; a keystroke, a gesture or a macro step \
+             there runs any action's cross-platform half, and a native-only half answers unhandled"
         )
     })
 }

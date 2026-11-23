@@ -20,7 +20,7 @@ use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::projection::RUN_CHANNEL;
 use glam::Vec2;
 
-use super::outline::{self, OutlineStyle};
+use super::outline::{self, OutlineStyle, StrokeModel, Strokes};
 
 /// The band's corners, in the order top-left, top-right, bottom-left,
 /// bottom-right: the console frame's rounded arcs.
@@ -37,7 +37,7 @@ pub(crate) const BAND_VERTICAL: &str = "\u{2506}"; // ┆
 const BAND_ALPHA: u8 = 200;
 
 /// The band's outline.
-const BAND: OutlineStyle = OutlineStyle {
+pub(crate) const BAND: OutlineStyle = OutlineStyle {
     corners: BAND_CORNERS,
     horizontal: BAND_HORIZONTAL,
     vertical: BAND_VERTICAL,
@@ -61,9 +61,20 @@ pub(super) fn plant(chrome: &mut GfxTree) -> BandRuns {
     })
 }
 
+thread_local! {
+    /// Where the band's glyphs draw their strokes: measured once, at the
+    /// band's first draw, not at every move.
+    static BAND_MODEL: std::cell::OnceCell<StrokeModel> = const { std::cell::OnceCell::new() };
+}
+
 /// The four runs a band over `rect` draws, in [`BandRuns`] order, or
-/// the four hidden ones with `None`.
+/// the four hidden ones with `None`: its strokes at the distances the
+/// band always stood at ([`StrokeModel::standing`]), its corners meeting
+/// its edges and sides.
 pub(super) fn runs_for(rect: Option<Rect>) -> [GlyphRunData; 4] {
     let mut fonts = FontSystemLease::new("view::band");
-    outline::runs_for(rect, &BAND, &mut fonts)
+    let model = BAND_MODEL.with(|model| *model.get_or_init(|| StrokeModel::of(&BAND, &mut fonts)));
+    let strokes = rect.map(|rect| Strokes::around(rect, model.standing()));
+    let reach = strokes.map_or([(0.0, 0.0); 2], |s| [(s.top, s.bottom); 2]);
+    outline::runs_for(strokes, reach, [true; 4], &model, &BAND, &mut fonts)
 }

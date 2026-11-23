@@ -2202,9 +2202,9 @@ are picked: the view dims every other node and frames each of its
 sections, the picked one heavier ([editor chrome](#editor-chrome)); a
 click inside the node picks a section, or the node; Enter
 (`EnterSectionEdit`) or a double-click opens the
-[section text editor](#modal-editor-ladder) on a section; a drag on a
-picked section moves it and the resize mode on it resizes it (native,
-as every drag is); and a click outside the node, or `ExitMode`, leaves
+[section text editor](#modal-editor-ladder) on a section; a drag on
+any section of the node moves it, as on `main`, and the resize mode on
+a selected section resizes it (native, as every drag is); and a click outside the node, or `ExitMode`, leaves
 the mode, the selection lifted back to the node. A node of one section
 skips the picking: `EnterNodeEdit` opens its editor at once, and
 closing it leaves the mode.
@@ -2333,8 +2333,9 @@ cancel of the touch driving it and an undo cancel it, and the map is as
 it was; a drag refused changes nothing, the selection included. The
 gestures (`live::Gesture`): moving nodes (with their subtrees unless
 Alt; the selection with Shift, which the grabbed node joins), moving a
-section (a press on one node editing picked), a node's or a section's resize handle, a path's anchor, control
-point or midpoint handle, a label, a portal end. A label and a portal
+section (any section of the node NodeEdit is editing), a node's or a
+section's resize handle, a path's anchor, control point or midpoint
+handle, a label, a portal end. A label and a portal
 end are drawn where the pointer takes them, at the place on them the
 press held: the drag's travel from where they were drawn at the press,
 through the projector's inverses of where it draws them
@@ -2391,7 +2392,12 @@ focus (`MapView::follow_editor`) and rewrites the caret only when the
 focus moved, or a sync pass touched the edited element or moved its
 geometry, so a pan writes none. **Node editing's section frames**
 (`view/frames.rs`) are a pool of chrome outlines, one per section of
-the edited node, the picked one heavy; **its dim**
+the edited node, the picked one heavy, each stroke placed between the
+section's box and its rings' ink — halfway, at most where the outline
+stood, hugging the box where there is no room but never on the
+section's own letters, never across the ink (a side with no room
+between the two is not drawn) — with its corners where its strokes
+meet; **its dim**
 (`view::overlay::Dim`) fades the glyphs of every other node — except
 one another overlay tints, so no two overlays share a run — to half
 their alpha through the glyph layers' `fade` override channel
@@ -2984,8 +2990,9 @@ editor** (`app/single_line_edit/`, native), on a label, a ring's poem, a
 cap, a portal end's text or a path's content. Each session is a writer
 transaction (`Interaction::TextEdit`, `Interaction::SingleLineEdit`):
 its `Draft` holds an `EditBuffer` — the owner's spans and the style
-they inherit (`baumhard::document::EditBuffer`), edited by grapheme
-cluster, typed text taking the style of the span it lands in — and
+they inherit (`baumhard::document::edit_buffer::EditBuffer`), edited
+by grapheme cluster, typed text taking the style of the span it lands
+in — and
 each change stages the spans whole (`compose::replace_spans`); the
 commit is one history entry, a commit that changed nothing is a cancel
 (a `CreateOrphanNodeAndEdit` session keeps the node it made), and an

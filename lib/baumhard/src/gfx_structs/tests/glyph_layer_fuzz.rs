@@ -291,7 +291,8 @@ fn range(choices: &mut Choices<'_>) -> std::ops::Range<usize> {
     start..end(choices)
 }
 
-/// One authored run mutation.
+/// One run mutation: one a map can carry, or the `Fade` no file can
+/// spell, which NodeEdit's dim writes.
 fn mutation(choices: &mut Choices<'_>) -> GfxMutation {
     match choices.below(6) {
         0 => GfxMutation::RunOrigin(any_vec2(choices)),
@@ -311,8 +312,10 @@ fn mutation(choices: &mut Choices<'_>) -> GfxMutation {
             value: any_f32(choices),
         }),
         // The fade no file spells, which NodeEdit's dim writes (ruling K2
-        // on #249), shares the last choice with `Clear`, so the inputs
-        // that chose the others decode as they did before it.
+        // on #249), and `Clear` split what was `Clear`'s choice alone: an
+        // input that chose any other arm decodes as it did before, and one
+        // that chose `Clear` now draws `Clear` or `Fade`, so `Clear` is
+        // drawn half as often.
         _ if choices.one_in(2) => GfxMutation::RunOverrides(RunOverrideOp::Fade {
             range: range(choices),
             value: any_f32(choices),

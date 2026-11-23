@@ -383,16 +383,21 @@ impl MapView {
         let mut any = false;
         let node = self.node_edit.filter(|&node| doc.doc().get(node).is_some());
         let focus = self.focused_section(doc, node);
+        // The node, its sections and its frame, and its rings: what a frame
+        // is placed by (`frames::place`).
         let follow_frames = changes.is_some()
             && node.is_some_and(|node| {
+                let d = doc.doc();
                 self.projector.geometry_moved(node)
-                    || doc
-                        .doc()
-                        .children(node)
-                        .any(|child| self.projector.geometry_moved(child))
+                    || d.children(node).any(|child| {
+                        self.projector.geometry_moved(child)
+                            || d.children(child).any(|ring| self.projector.geometry_moved(ring))
+                    })
             });
         if self.frames.due(node, focus, follow_frames) {
-            let want = SectionFrames::wanted(doc.doc(), &self.projector, node, focus);
+            let want = self
+                .frames
+                .wanted(doc.doc(), &self.projector, &self.layers, node, focus);
             let grow = self.frames.grow(want.len());
             if !grow.is_empty() {
                 for (mutator, anchors) in &grow {
@@ -606,16 +611,31 @@ impl MapView {
         Ok(journal.close(&self.chrome))
     }
 
+    /// The status line the view shows now: NodeEdit's, read from the
+    /// document and the focused section
+    /// (`InteractionMode::node_edit_line`), or the active mode's
+    /// (`follow_mode`), or else the document's refusal, or else its
+    /// missing-font notice (#329). O(the edited node's children).
+    pub(crate) fn status(&self, doc: &MindMapDocument) -> Option<String> {
+        let node_edit = self.node_edit.and_then(|node| {
+            let focus = self.focused_section(doc, Some(node));
+            crate::application::app::InteractionMode::node_edit_line(doc.doc(), node, focus)
+        });
+        node_edit
+            .or_else(|| self.mode_line.clone())
+            .or_else(|| doc.status().map(str::to_string))
+            .or_else(|| doc.font_notice().map(str::to_string))
+    }
+
     /// Hand the status line to the renderer when it is not the one last
     /// shown: the active mode's (`follow_mode`), or else the document's
     /// refusal, or else its missing-font notice (#329). Returns whether
     /// it changed.
     fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
-        let status = self.mode_line.as_deref().or(doc.status()).or(doc.font_notice());
-        if status == self.shown_status.as_deref() {
+        let status = self.status(doc);
+        if status == self.shown_status {
             return false;
         }
-        let status = status.map(str::to_string);
         renderer.set_mode_status_text(status.clone());
         self.shown_status = status;
         true
