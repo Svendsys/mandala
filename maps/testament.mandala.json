@@ -2324,7 +2324,7 @@
       "position": [-1433.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Atomic-repeat", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=##=+\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=##=+"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=##=+"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2333,7 +2333,7 @@
       "position": [-993.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Prefix-Fill-Suffix", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"###(*)###\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "###(*)###"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "*"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2342,7 +2342,7 @@
       "position": [-553.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Multi-cluster", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrepeat \"◆·\" on all sides", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "◆·"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "spacing": 1.0, "size": 0.16363636, "spans": [{"text": "◆·"}], "vertical": "◆·", "corners": ["◇", "◇", "◇", "◇"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2369,7 +2369,7 @@
       "position": [766.88, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Escape grammar", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=#(\\(\\))#=+\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=#(\\(\\))#=+"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "()"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
